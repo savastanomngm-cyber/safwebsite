@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skia Alpha Fund — Terminal</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--ivory:#f4eee1;--paper:#fbf7ec;--navy:#0d1f33;--navy2:#13293f;--ink:#1a2b40;--gold:#c9a13b;--gold2:#a5762a;--goldL:#e9cf9a;--line:rgba(13,31,51,.14);--pos:#1d7a4f;--neg:#a33535;--hold:#b07d2a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--ivory);color:var(--ink);font-family:Inter,system-ui,sans-serif;font-size:14px;line-height:1.5}
+h1,h2,h3,.serif{font-family:'Playfair Display',Georgia,serif;color:var(--navy)}
+header{position:sticky;top:0;z-index:50;background:linear-gradient(180deg,var(--navy) 0%,var(--navy2) 100%);border-bottom:3px solid var(--gold);padding:10px 22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;box-shadow:0 4px 18px rgba(13,31,51,.35)}
+.brand{display:flex;align-items:center;gap:12px}
+.brand .emblem{width:46px;height:46px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
+.brand .saf{font-family:'Playfair Display',serif;font-weight:800;font-size:24px;color:var(--ivory);letter-spacing:2px;line-height:1}
+.brand .full{font-size:9.5px;letter-spacing:4px;color:var(--goldL);font-weight:600}
+nav{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}
+nav button{background:transparent;border:1px solid transparent;color:var(--ivory);font:600 12px Inter;letter-spacing:1.5px;padding:8px 14px;cursor:pointer;border-radius:8px;text-transform:uppercase;transition:.2s}
+nav button:hover{border-color:var(--gold);color:var(--goldL)}
+nav button.on{background:var(--gold);color:var(--navy);box-shadow:0 2px 8px rgba(201,161,59,.4)}
+.pills{display:flex;gap:6px}
+.pill{font:600 10px Inter;letter-spacing:1px;padding:5px 10px;border-radius:20px;border:1px solid}
+.pill.ok{color:#9fe0bd;border-color:#2c6e4f;background:rgba(29,122,79,.25)}
+.pill.off{color:#e8c9a0;border-color:#8a6a3a;background:rgba(176,125,42,.18)}
+main{max-width:1280px;margin:0 auto;padding:24px 18px 60px}
+.wrap{display:flex;flex-direction:column;gap:18px;animation:up .35s ease}
+@keyframes up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:20px 22px;box-shadow:0 2px 10px rgba(13,31,51,.06)}
+.card h1{font-size:24px;margin-bottom:2px}
+.card h2{font-size:17px;padding-bottom:8px;margin-bottom:12px;border-bottom:2px solid transparent;border-image:linear-gradient(90deg,var(--gold),transparent) 1}
+.sub{color:#6b7787;font-size:12px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input,select{font:500 13px Inter;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);outline:none}
+input:focus,select:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(201,161,59,.18)}
+.btn{background:var(--navy);color:var(--ivory);border:none;border-radius:9px;padding:10px 16px;font:600 12.5px Inter;letter-spacing:.6px;cursor:pointer;transition:.2s}
+.btn:hover{background:var(--navy2);box-shadow:0 0 0 3px rgba(201,161,59,.3)}
+.btn.gold{background:linear-gradient(135deg,var(--gold2),var(--gold) 45%,var(--goldL));color:var(--navy)}
+.btn.ghost{background:transparent;color:var(--navy);border:1px solid var(--navy)}
+.btn:disabled{opacity:.5;cursor:wait}
+.grid2{display:grid;grid-template-columns:2fr 1fr;gap:18px}
+.grid-tools{display:grid;grid-template-columns:250px 1fr;gap:18px}
+@media(max-width:960px){.grid2,.grid-tools{grid-template-columns:1fr}}
+.tools{display:flex;flex-direction:column;gap:6px}
+.tools button{text-align:left;background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px 14px;font:600 12.5px Inter;color:var(--ink);cursor:pointer;transition:.15s}
+.tools button:hover{border-color:var(--gold);background:#fffdf6}
+.tools button.on{background:var(--navy);color:var(--ivory);border-color:var(--navy)}
+.tbl{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{font:700 10.5px Inter;letter-spacing:1.4px;text-transform:uppercase;color:var(--navy);text-align:left;padding:8px 10px;border-bottom:2px solid var(--gold)}
+td{padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:hover td{background:rgba(201,161,59,.06)}
+td.r,th.r{text-align:right}
+td.c,th.c{text-align:center}
+.dim{color:#9aa5b1}
+.pos{color:var(--pos);font-weight:600}.neg{color:var(--neg);font-weight:600}
+.secrow td{background:rgba(13,31,51,.05);font-weight:700;color:var(--gold2);letter-spacing:1px;border-bottom:1px solid var(--line)}
+.sig{font:700 10px Inter;letter-spacing:.8px;padding:4px 9px;border-radius:14px;white-space:nowrap}
+.sig.buy,.sig.pass{color:#fff;background:var(--pos)}
+.sig.sell,.sig.fail{color:#fff;background:var(--neg)}
+.sig.hold,.sig.watch{color:#fff;background:var(--hold)}
+.sig.none{color:#8a94a2;background:#e8e4d8}
+.panel{border:1px solid var(--line);border-left:4px solid var(--gold);border-radius:10px;background:#fff;padding:14px 16px;margin:10px 0}
+.panel.buy{border-left-color:var(--pos)}.panel.sell{border-left-color:var(--neg)}.panel.hold{border-left-color:var(--hold)}
+.panel h3{font-size:14px;margin-bottom:6px}
+pre.memo{white-space:pre-wrap;font:12.5px/1.6 Inter;color:var(--ink)}
+.stage{display:flex;gap:14px;position:relative;padding-bottom:18px}
+.stage::before{content:"";position:absolute;left:17px;top:36px;bottom:0;width:2px;background:linear-gradient(var(--gold),rgba(201,161,59,.15))}
+.stage:last-child::before{display:none}
+.stage .n{width:36px;height:36px;flex:none;border-radius:50%;background:var(--navy);color:var(--goldL);font:700 14px 'Playfair Display';display:flex;align-items:center;justify-content:center;border:2px solid var(--gold)}
+.stage .b{flex:1;min-width:0}
+.stage h3{font-size:14px}
+.stage .txt{font-size:12.5px;color:#41506275;color:#415062;max-height:220px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:6px;white-space:pre-wrap}
+.loader{display:inline-block;width:14px;height:14px;border:2px solid var(--gold);border-top-color:transparent;border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.chip{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:14px;padding:3px 10px;margin:2px;font:600 11px Inter;color:var(--navy)}
+.stepper{display:flex;align-items:center;gap:8px}
+.stepper button{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);background:#fff;cursor:pointer;font-weight:700}
+.stepper .v{width:26px;text-align:center;font-weight:700;color:var(--navy)}
+.bar{height:8px;border-radius:5px;background:#e8e2d2;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold2),var(--goldL));transition:width .3s}
+footer{text-align:center;padding:26px;color:#8a94a2;font-size:11px;letter-spacing:2px}
+.kv{display:grid;grid-template-columns:180px 1fr;gap:6px 14px;font-size:12.5px}
+.kv b{color:var(--navy)}
+details{margin:6px 0}
+summary{cursor:pointer;font-weight:600;color:var(--navy)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+<linearGradient id="au" x1="0" y1="1" x2="1" y2="0">
+<stop offset="0" stop-color="#8a5a24"/><stop offset=".42" stop-color="#e9cf9a"/><stop offset=".6" stop-color="#c9a13b"/><stop offset="1" stop-color="#a5762a"/>
+</linearGradient></defs></svg>
+
+<header>
+  <div class="brand">
+    <svg class="emblem" viewBox="0 0 100 100">
+      <text x="46" y="74" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-size="82" fill="url(#au)">α</text>
+      <polygon points="56,86 65,86 85,30 76,30" fill="url(#au)" stroke="#7a4d1d" stroke-width="1"/>
+      <polygon points="70,32 94,32 82,6" fill="url(#au)" stroke="#7a4d1d" stroke-width="1"/>
+    </svg>
+    <div><div class="saf">SAF</div><div class="full">SKIA ALPHA FUND</div></div>
+  </div>
+  <nav id="nav">
+    <button data-tab="dash" class="on">Dashboard</button>
+    <button data-tab="screener">Screener</button>
+    <button data-tab="agents">TradingAgents</button>
+    <button data-tab="memory">Memory</button>
+    <button data-tab="diag">Diagnostics</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <div class="pills"><span class="pill off" id="pillAI">AI OFF</span><span class="pill ok" id="pillData">SIM DATA</span></div>
+</header>
+<main id="main"></main>
+<footer>SKIA ALPHA FUND · SHADOW ALPHA TERMINAL · α = EXCESS RETURN</footer>
+
+<script>
+"use strict";
+/* ═══════════════ UTILS ═══════════════ */
+const $=s=>document.querySelector(s);
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const clamp=(a,b,v)=>Math.max(a,Math.min(b,v));
+function fmtPct(v){if(v==null||isNaN(v))return'<span class="dim">—</span>';return v>=0?`<span class="pos">▲ +${v.toFixed(2)}%</span>`:`<span class="neg">▼ ${v.toFixed(2)}%</span>`;}
+function fmtMC(mc){if(mc==null)return"—";if(mc>=1e12)return"$"+(mc/1e12).toFixed(2)+"T";if(mc>=9e8)return"$"+(mc/1e9).toFixed(2)+"B";if(mc>=1e6)return"$"+(mc/1e6).toFixed(1)+"M";return"$"+Math.round(mc).toLocaleString();}
+function downloadCSV(name,rows){const csv=rows.map(r=>r.map(c=>'"'+String(c??"").replace(/"/g,'""')+'"').join(",")).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=name;a.click();}
+function xmur3(str){let h=1779033703^str.length;for(let i=0;i<str.length;i++){h=Math.imul(h^str.charCodeAt(i),3432918353);h=h<<13|h>>>19;}return()=>{h=Math.imul(h^h>>>16,2246822507);h=Math.imul(h^h>>>13,3266489909);return(h^=h>>>16)>>>0;};}
+function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const rngFor=t=>mulberry32(xmur3("SAF:"+t)());
+function extractJSON(text){if(!text)return null;try{return JSON.parse(text);}catch(e){}const m=text.match(/\{[\s\S]*\}/);if(m){try{return JSON.parse(m[0]);}catch(e){}}return null;}
+
+/* ═══════════════ CONFIG / PERSISTENCE ═══════════════ */
+const LS={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}};
+const state={tab:"dash",settings:LS.get("saf_settings",{key:"",live:false,deep:"openai/gpt-oss-120b",fast:"openai/gpt-oss-20b",rounds:2}),lastScreen:null};
+const memory=LS.get("saf_memory",[]);
+const aiLog=LS.get("saf_ai_log",[]);
+
+/* ═══════════════ BASKETS (ported from SAF.py) ═══════════════ */
+const BASKETS={
+"🧠 JIM SIMONS (RenTech)":{NVDA:1,PLTR:1,UTHR:1,META:1,AAPL:1,VRSN:1,EXEL:1,KGC:1,SPOT:1,NFLX:1,HOOD:1,GOOGL:1},
+"🏛️ PELOSI TRACKER":{NVDA:1,MSFT:1,AAPL:1,GOOGL:1,AMZN:1,PANW:1,CRM:1,TEM:1},
+"🐻 BURRY TRACKER":{AMZN:1,VIST:1,VST:1,AEP:1,DTE:1},
+"🦉 BUFFETT TRACKER":{AAPL:1,BAC:1,CVX:1,OXY:1,KO:1,AXP:1,MMM:1},
+"🦁 ACKMAN TRACKER":{GOOGL:1,META:1,CMG:1,NFLX:1,QSR:1,HLT:1,UBER:1},
+"🧠 DRUCKENMILLER TRACKER":{NVDA:1,MSFT:1,LLY:1,UNH:1,VRT:1,GE:1,VRTX:1},
+"🏭 CITADEL TRACKER":{SPY:1,QQQ:1,IWM:1,AAPL:1,MSFT:1},
+"🎯 INVERSE CRAMER (Bear ETFs)":{SQQQ:1,SH:1,SPXU:1},
+"🤖 AI WORLD WAR III":{LMT:1,RTX:1,NOC:1,PLTR:1,NVDA:1,GD:1,SMH:1},
+"🧬 GENOME (Biotech Innovation)":{AMGN:2,GILD:2,VRTX:2,REGN:2,MRNA:1.5,BNTX:1.5,ALNY:1.5,IONS:1.5,CRSP:1,NTLA:1,BEAM:1,EDIT:1},
+"⛏️ TERRA (Global Commodities)":{XOM:2,CVX:2,OXY:1.5,FCX:1.5,NEM:1.5,GLD:1.5,MOS:1,CF:1,CORN:1,PHO:1.5,AWK:1},
+"🤖 NEXUS (AI Tech Infrastructure)":{NVDA:3,AMD:2,AVGO:2,TSM:2,MSFT:2,GOOGL:2,AMZN:2,META:1.5,PLTR:1.5,NOW:1,SNOW:1,VRT:1},
+"💧 WATER (AI Cooling + Scarcity)":{PHO:1,FIW:1,AWK:1,XYL:1,ECL:1,VRT:1},
+"⚙️ FLUID & MEMBRANE BOTTLENECKS":{FLS:2,ROP:2,DD:1.5,XYL:1.5,VRT:1.5},
+"⚔️ AGRO-CHEM MONOPOLIES (War Squeeze)":{NTR:2.5,MOS:2,CF:2,YARIY:1.5,FMC:1},
+"🌾 CROP YIELD SHORTAGE":{DBA:3,WEAT:2,CORN:2},
+"🚢 BULK CHEMICAL FREIGHT":{ZIM:2,FLNG:2,INSW:1.5},
+"🕵️ BORDER & AML TECH":{PLTR:2,RTX:1.5,NICE:1.5,GD:1},
+"🥇 GOLD MINERS (Traditional)":{NEM:2,GOLD:2,AEM:2,GDX:1.5,GDXJ:1},
+"👑 GOLD ROYALTY (Pick & Shovel)":{FNV:2.5,WPM:2.5,RGLD:2,OR:1.5},
+"♻️ E-WASTE & URBAN MINING":{UMICY:2.5,"NDA.DE":2.5,"BOL.ST":2,GLNCY:1.5,"5711.T":2,"5713.T":1.5,"5714.T":1.5,"5857.T":1,SMSMY:1.5,NUE:1,CLH:1,"JMAT.L":1.5,"TOM.OL":1,"ANDR.VI":1,AREC:.5},
+"🏦 GOLD BULLION & ETFs":{GLD:3,IAU:2,PHYS:1.5,RING:1},
+"🔧 MINING CAPEX (Equipment)":{CAT:2.5,SDVKY:2,"EPI-B.ST":1.5,FLIDY:1},
+"🌿 EU CANNABIS INFRASTRUCTURE":{"MTRS.ST":2.5,TT:1.5,"LIGHT.AS":2,"SRT.DE":2,LIN:1.5,"AI.PA":1.5,"SAP.DE":1.5,ZBRA:1},
+"🦷 DENTAL DISRUPTION (Watch to Short)":{NVST:2,XRAY:2,HSIC:1.5,IDXX:1},
+"🛡️ DRONES & EDGE AI (New Primes)":{AVAV:2.5,KTOS:2,RCAT:1},
+"🧠 EDGE AI & SENSORS":{AMBA:2,TDY:2,MRCY:1.5},
+"🛡️ C-UAS & AI SURVEILLANCE":{AXON:2.5,PLTR:2.5,LHX:1.5},
+"🧲 RARE EARTH (Drone Motors)":{MP:3},
+"⚛️ QUANTUM BOTTLENECKS":{MKSI:3,COHR:2.5,"OXIG.L":2,"PFV.DE":2,LITE:1.5},
+"🔦 SENSORS & PHOTODETECTORS":{"6965.T":3,TDY:2,AMSYF:1.5,IPGP:1.5,LASR:1},
+"🎲 PURE-PLAY QUANTUM (High Risk)":{IONQ:2.5,RGTI:1.5,QBTS:1.5,QUBT:.5,ARQQ:.5},
+"🏛️ QUANTUM GIANTS (Safe Anchors)":{IBM:2,GOOGL:2,HON:2,MSFT:1.5},
+"❄️ HELIUM & CRYOGENIC GASES":{LIN:3,APD:2},
+"📡 RF & CONTROL ELECTRONICS":{KEYS:2,ADI:2,AMD:1.5},
+"🏭 BIOTECH FOUNDRIES (CDMOs)":{TMO:3,DHR:2.5,"LONN.SW":2,BIO:1.5},
+"❄️ COLD CHAIN & GLASS":{CYRX:2.5,SHTPY:2,GLW:1.5},
+"📋 CROs (Trial Managers)":{IQV:2.5,MEDP:2,LH:1.5},
+"🔬 LIFE SCIENCE TOOLS":{ILMN:2,WAT:2,A:1.5},
+"🔬 PHARMA GLASS MONOPOLY":{SHTPY:3,STVN:2.5,"GXI.DE":2},
+"🪟 SPECIALTY GLASS INFRASTRUCTURE":{GLW:3,"7741.T":2,"5201.T":1.5},
+"🧩 VIAL ECOSYSTEM":{WST:3,MTD:1.5},
+"⛏️ BORON RAW MATERIALS":{RIO:3,MOS:1.5,NTR:1.5,LIN:1},
+"📏 SPY (S&P 500)":{SPY:1},"📏 QQQ (Nasdaq 100)":{QQQ:1},"📏 XBI (Biotech ETF)":{XBI:1},"📏 GSG (Commodity ETF)":{GSG:1},"📏 SMH (Chip ETF)":{SMH:1},"📏 GLD (Gold ETF)":{GLD:1}};
+const SECTIONS={"🎮 AUTOPILOT TRACKERS":["🧠 JIM SIMONS (RenTech)","🏛️ PELOSI TRACKER","🐻 BURRY TRACKER","🦉 BUFFETT TRACKER","🦁 ACKMAN TRACKER","🧠 DRUCKENMILLER TRACKER","🏭 CITADEL TRACKER","🎯 INVERSE CRAMER (Bear ETFs)","🤖 AI WORLD WAR III"],
+"📊 CUSTOM INDICES":["🧬 GENOME (Biotech Innovation)","⛏️ TERRA (Global Commodities)","🤖 NEXUS (AI Tech Infrastructure)"],
+"💧 WATER":["💧 WATER (AI Cooling + Scarcity)","⚙️ FLUID & MEMBRANE BOTTLENECKS"],
+"⚔️ FERTILIZER / WAR SQUEEZE":["⚔️ AGRO-CHEM MONOPOLIES (War Squeeze)","🌾 CROP YIELD SHORTAGE","🚢 BULK CHEMICAL FREIGHT","🕵️ BORDER & AML TECH"],
+"🥇 GOLD & E-WASTE":["🥇 GOLD MINERS (Traditional)","👑 GOLD ROYALTY (Pick & Shovel)","♻️ E-WASTE & URBAN MINING","🏦 GOLD BULLION & ETFs","🔧 MINING CAPEX (Equipment)"],
+"🌿 EU CANNABIS INFRA":["🌿 EU CANNABIS INFRASTRUCTURE"],"🦷 DENTAL DISRUPTION":["🦷 DENTAL DISRUPTION (Watch to Short)"],
+"🛡️ NEXT-GEN WARFARE":["🛡️ DRONES & EDGE AI (New Primes)","🧠 EDGE AI & SENSORS","🛡️ C-UAS & AI SURVEILLANCE","🧲 RARE EARTH (Drone Motors)"],
+"️ QUANTUM COMPUTING":["⚛️ QUANTUM BOTTLENECKS","🔦 SENSORS & PHOTODETECTORS","🎲 PURE-PLAY QUANTUM (High Risk)","🏛️ QUANTUM GIANTS (Safe Anchors)","❄️ HELIUM & CRYOGENIC GASES","📡 RF & CONTROL ELECTRONICS"],
+"🧬 BIOTECH INFRASTRUCTURE":["🏭 BIOTECH FOUNDRIES (CDMOs)","❄️ COLD CHAIN & GLASS","📋 CROs (Trial Managers)","🔬 LIFE SCIENCE TOOLS"],
+"🔬 BOROSILICATE & BORON":["🔬 PHARMA GLASS MONOPOLY","🪟 SPECIALTY GLASS INFRASTRUCTURE","🧩 VIAL ECOSYSTEM","⛏️ BORON RAW MATERIALS"],
+"📏 BENCHMARKS":["📏 SPY (S&P 500)","📏 QQQ (Nasdaq 100)","📏 XBI (Biotech ETF)","📏 GSG (Commodity ETF)","📏 SMH (Chip ETF)","📏 GLD (Gold ETF)"]};
+/* merge persisted custom baskets (saf_baskets_custom.json equivalent) */
+(function(){const c=LS.get("saf_custom",{});for(const k in c){if(!BASKETS[k])BASKETS[k]=c[k];else Object.assign(BASKETS[k],c[k]);}})();
+function add_to_saf(ticker,weight,basket){if(!BASKETS[basket])BASKETS[basket]={};BASKETS[basket][ticker]=weight;const c=LS.get("saf_custom",{});if(!c[basket])c[basket]={};c[basket][ticker]=weight;LS.set("saf_custom",c);}
+const uniqueTickers=()=>[...new Set(Object.values(BASKETS).flatMap(h=>Object.keys(h)))];
+
+/* ═══════════════ UNIVERSE (ported from sfascreener.py) ═══════════════ */
+let UNIVERSE=LS.get("saf_universe",null)||{"Specialty Chemicals":["LIN","APD","SHW","PPG","ECL","DD","ALB","FMC","MOS","CF","NTR","CE","ASH","OLN","WLK","TROX"],
+"Industrial Equipment":["CAT","PH","ITT","FLS","ROP","IEX","CMI","DOV","ETN","EMR","HON","MMM","MIDD","GTLS","XMTR"],
+"Life Science Tools":["TMO","DHR","A","WAT","MTD","ILMN","PKI","BRKR","MKSI","KEYS","TECH","RVTY","AZTA"],
+"Semicon Equipment":["AMAT","LRCX","KLAC","ASML","TER","ONTO","COHU","ENTG","UCTT"],
+"Specialty Glass":["GLW","STVN","SHTPY","GXI.DE","IP","PKG","AMCR","SEE","ATR","BERY"],
+"Critical Minerals":["FCX","NEM","GOLD","AEM","RIO","BHP","SCCO","MP","UUUU","CCJ","TMC","LAC"],
+"Shipping & Freight":["ZIM","INSW","FLNG","STNG","TNK","DHT","OET","TGS","FRO","EURM"],
+"Water & Environmental":["XYL","AWK","WMS","AOS","PENT","TTEK","DAR"],
+"Defense & Aerospace":["LMT","RTX","NOC","GD","LHX","HII","AVAV","KTOS","MRCY","HEI"],
+"Sensors & Connectors":["TDY","TEL","APH","ADI","TXN","MCHP","ON","AMBA","IPGP","LASR","COHR","LITE"],
+"Energy Infrastructure":["OXY","XOM","CVX","VST","CEG","NRG","ET","KMI"],
+"MedTech & Diagnostics":["ISRG","DXCM","PODD","BSX","ZBH","WST","COO","STE"]};
+const saveUniverse=()=>LS.set("saf_universe",UNIVERSE);
+const universeTickers=()=>[...new Set(Object.values(UNIVERSE).flat())];
+function sectorOf(t){for(const s in UNIVERSE)if(UNIVERSE[s].includes(t))return s;return null;}
+
+/* ═══════════════ DATA LAYER (self-healing: live → sim fallback) ═══════════════ */
+const GRID=(()=>{const d=[];let x=new Date();while(d.length<400){const w=x.getDay();if(w!==0&&w!==6)d.unshift(new Date(x));x.setDate(x.getDate()-1);}return d;})();
+const seriesCache=new Map();
+function simSeries(t){const rnd=rngFor(t);const base=8+Math.pow(rnd(),1.7)*680;let drift=(rnd()-0.38)*0.0016;let vol=0.012+rnd()*0.022;if(t==="SPY"){drift=0.0007;vol=0.010;}let p=base;const out=[];for(let i=0;i<GRID.length;i++){const n=(rnd()+rnd()+rnd()-1.5)/1.5;p*=1+drift+vol*n;out.push({t:GRID[i],p});}return out;}
+async function fetchLive(t){const url="https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(t)+"?range=1y&interval=1d";const px=u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u);try{const r=await fetch(px(url),{signal:AbortSignal.timeout(9000)});if(!r.ok)return null;const d=await r.json();const res=d.chart&&d.chart.result&&d.chart.result[0];if(!res)return null;const ts=res.timestamp||[],cl=((res.indicators||{}).quote||[{}])[0].close||[];const out=[];for(let i=0;i<ts.length;i++)if(cl[i]!=null)out.push({t:new Date(ts[i]*1000),p:cl[i]});return out.length>100?out:null;}catch(e){return null;}}
+async function getSeries(t){if(seriesCache.has(t))return seriesCache.get(t);let s=null;if(state.settings.live)s=await fetchLive(t);if(!s)s=simSeries(t);seriesCache.set(t,s);return s;}
+
+/* ═══════════════ QUANT MATH (mirrors Python formulas) ═══════════════ */
+function periodReturn(s,days){if(!s||s.length<2)return null;let base;if(days==="YTD"){const yr=s[s.length-1].t.getFullYear();const yp=s.filter(q=>q.t.getFullYear()===yr);if(yp.length<2)return null;base=yp[0].p;}else{const cut=new Date(s[s.length-1].t.getTime()-days*864e5);const v=s.filter(q=>q.t>=cut);if(v.length<2)return null;base=v[0].p;}return (s[s.length-1].p-base)/base*100;}
+function maxDrawdown(s){let pk=-1e18,m=0;for(const q of s){if(q.p>pk)pk=q.p;const d=(q.p-pk)/pk;if(d<m)m=d;}return m*100;}
+function pearson(x,y){const n=Math.min(x.length,y.length);if(n<61)return null;const a=x.slice(-n),b=y.slice(-n);const ra=[],rb=[];for(let i=1;i<n;i++){ra.push((a[i].p-a[i-1].p)/a[i-1].p);rb.push((b[i].p-b[i-1].p)/b[i-1].p);}let mx=0,my=0;for(let i=0;i<ra.length;i++){mx+=ra[i];my+=rb[i];}mx/=ra.length;my/=ra.length;let sxy=0,sx=0,sy=0;for(let i=0;i<ra.length;i++){const dx=ra[i]-mx,dy=rb[i]-my;sxy+=dx*dy;sx+=dx*dx;sy+=dy*dy;}return sx&&sy?sxy/Math.sqrt(sx*sy):null;}
+const smaLast=(s,n)=>s.length<n?null:s.slice(-n).reduce((a,q)=>a+q.p,0)/n;
+function rsiLast(s,p=14){if(s.length<p+1)return null;let g=0,l=0;for(let i=s.length-p;i<s.length;i++){const d=s[i].p-s[i-1].p;if(d>=0)g+=d;else l-=d;}g/=p;l/=p;return l===0?100:100-100/(1+g/l);}
+function emaArr(v,k){const c=2/(k+1);const o=[v[0]];for(let i=1;i<v.length;i++)o.push(v[i]*c+o[i-1]*(1-c));return o;}
+function macdLast(s){const c=s.map(q=>q.p);const e12=emaArr(c,12),e26=emaArr(c,26);const m=c.map((_,i)=>e12[i]-e26[i]);const sg=emaArr(m,9);return{macd:m.at(-1),signal:sg.at(-1),hist:m.at(-1)-sg.at(-1)};}
+function indicators(s){const c=s.map(q=>q.p);const r=[];for(let i=1;i<c.length;i++)r.push((c[i]-c[i-1])/c[i-1]);const mean=r.reduce((a,b)=>a+b,0)/(r.length||1);const vol=Math.sqrt(r.reduce((a,b)=>a+(b-mean)**2,0)/(r.length||1))*Math.sqrt(252);const m20=smaLast(s,20);const std20=Math.sqrt(s.slice(-20).reduce((a,q)=>a+(q.p-m20)**2,0)/20);return{close:c.at(-1),sma20:m20,sma50:smaLast(s,50),sma200:smaLast(s,200),rsi:rsiLast(s),...macdLast(s),bbU:m20+2*std20,bbL:m20-2*std20,atr:s.length>15?Math.abs(c.at(-1)-c.at(-2)):0,annVol:vol,r5:periodReturn(s,5),r20:periodReturn(s,20)};}
+function shadowAlphaScore(s,spy){if(!s||s.length<100)return null;const ytd=periodReturn(s,"YTD")||0,m1=periodReturn(s,30)||0;const above=s.at(-1).p>smaLast(s,50)?1:0;const trend=clamp(0,25,ytd*0.25+m1*0.25+above*8);let corr=pearson(s,spy);if(corr==null)corr=0.5;const indep=clamp(0,25,(1-Math.abs(corr))*30);const spyYtd=periodReturn(spy,"YTD")||0;const rs=clamp(0,25,(ytd-spyYtd)*0.4+12);const mdd=maxDrawdown(s);const c=s.map(q=>q.p);const r=[];for(let i=1;i<c.length;i++)r.push((c[i]-c[i-1])/c[i-1]);const vol=Math.sqrt(r.reduce((a,b)=>a+b*b,0)/r.length)*Math.sqrt(252);const stab=clamp(0,25,25-vol*25-Math.abs(mdd)*0.4);return{price:+c.at(-1).toFixed(2),ytd:+ytd.toFixed(2),correlation:+corr.toFixed(3),max_dd:+mdd.toFixed(2),trend:+trend.toFixed(1),independence:+indep.toFixed(1),rel_strength:+rs.toFixed(1),stability:+stab.toFixed(1),total:+(trend+indep+rs+stab).toFixed(1)};}
+function synthFund(t,s){const rnd=rngFor("FUND:"+t);const price=s.at(-1).p;return{name:t+" — "+(sectorOf(t)||"Global Infrastructure")+" Holdings",sector:sectorOf(t)||"Industrials",marketCap:3e8+Math.pow(rnd(),2)*2.7e12,price,avgVolume:Math.round(5e4+rnd()*2e7),grossMargin:0.15+rnd()*0.55,operMargin:0,forwardPE:8+rnd()*32};}
+
+/* ═══════════════ LLM LAYER (Groq, same retry/fallback spirit) ═══════════════ */
+async function llm(system,user,{model,temperature=0.7,json=false}={}){const st=state.settings;if(!st.key)return null;model=model||st.deep;for(let a=1;a<=3;a++){try{const body={model,messages:[{role:"system",content:system},{role:"user",content:user}],temperature,max_tokens:2048};if(json)body.response_format={type:"json_object"};const r=await fetch("https://api.groq.com/openai/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+st.key},body:JSON.stringify(body)});if(r.status===429){await sleep(5000*a);continue;}if(!r.ok)continue;const d=await r.json();return (d.choices?.[0]?.message?.content||"").trim();}catch(e){await sleep(1500);}}return null;}
+const AI=()=>!!state.settings.key;
+function saveAI(type,data){aiLog.push({type,date:new Date().toISOString(),data});if(aiLog.length>100)aiLog.shift();LS.set("saf_ai_log",aiLog);}
+
+/* ═══════════════ AGENT PROMPTS (ported verbatim) ═══════════════ */
+const P={
+TECH:"You are the TECHNICAL ANALYST. Analyze momentum, trend, volatility, support/resistance. End with 3-5 bullet 'Key Points Summary'. Cite actual numbers.",
+NEWS:"You are the NEWS ANALYST. Cross-reference headlines against supply-chain signals (13F filings, congressional disclosures, CoWoS/ABF/HBM3e bottlenecks, sanctions, transformer lead times, CDMO capacity). Score news impact -1.0..+1.0. State score first. End with 3-5 bullet summary.",
+SENT:"You are the SOCIAL MEDIA / SENTIMENT ANALYST. Gauge crowd and geopolitical sentiment; look for 'Shadow Supply Chain' signals. Score -1.0..+1.0. State score first. Under 100 words.",
+FUND:"You are the FUNDAMENTALS ANALYST. Assess profitability, growth, valuation, leverage. End with under/overvalued assessment.",
+GEOPOL:"You are the GEOPOLITICAL / SHADOW SUPPLY CHAIN ANALYST. Assess how illicit supply-chain disruptions, sanctions enforcement and organized-crime dynamics create pricing power for LEGITIMATE companies. Score risk premium -1.0 (stable)..+1.0 (severe). HIGH score = bearish for broad markets but BULLISH for Shadow Alpha bottleneck assets. Flag explicitly. Under 200 words.",
+BULL:"You are the BULLISH RESEARCHER. Build the strongest case FOR investing. Counter the bear. Cite numbers. Max 150 words.",
+BEAR:"You are the BEARISH RESEARCHER. Build the strongest case AGAINST investing. Counter the bull. Cite numbers. Max 150 words.",
+JUDGE:'You are the DEBATE FACILITATOR. Return ONLY JSON: {"winner":"BULL"|"BEAR","confidence":0-1,"rationale":"..."}',
+TRADER:'You are the TRADER. Return ONLY JSON: {"action":"BUY"|"SELL"|"HOLD","position_pct":0-100,"confidence":0-1,"rationale":"..."} NOTE: geopolitical score is a RISK PREMIUM score; high (+) favors Shadow Alpha bottleneck assets.',
+RISK_AGG:"You are the RISKY ANALYST. Advocate high-reward strategies. Max 80 words.",
+RISK_NEU:"You are the NEUTRAL ANALYST. Suggest hedges, scaling. Max 80 words.",
+RISK_SAFE:"You are the SAFE ANALYST. Flag drawdown risk, suggest cuts or veto. Max 80 words.",
+RISK_JUDGE:'You are the RISK MANAGER. Return ONLY JSON: {"adjusted_action":"BUY"|"SELL"|"HOLD","adjusted_position_pct":0-100,"risk_score":1-10,"risk_notes":"..."}',
+MANAGER:'You are the FUND MANAGER. Final authority. Return ONLY JSON: {"approved":true|false,"final_action":"BUY"|"SELL"|"HOLD","final_position_pct":0-100,"notes":"..."}',
+CORRELATE:'You are the SKIA ALPHA FUND PORTFOLIO STRATEGIST (Shadow Alpha specialist). Return ONLY JSON: {"recommended_basket":"...","new_basket_needed":bool,"new_basket_name":"...","suggested_weight":0.5-3.0,"correlation_notes":"...","thesis_fit":"STRONG"|"MODERATE"|"WEAK","rationale":"..."}',
+DEEP:"You are the FUND MANAGER at Skia Alpha Fund. Write a max-300-word memo: VERDICT (BUY/WATCH/SKIP), THESIS, RISK, CATALYST, SIZING (0.5x-3x), GEOPOLITICAL ANGLE. Be decisive. Cite numbers.",
+BOTTLE:'Score the company 1-5 on: market_concentration, substitutability, capital_intensity, regulatory_moat, demand_inelasticity, cross_sector_demand. Return ONLY JSON: {"ticker","company_name","what_they_do","scores":{...},"total","reasoning":{...},"verdict":"TRUE BOTTLENECK"|"NOT A BOTTLENECK","key_risk"}',
+SUPPLY:'Map the physical supply chain of the trend; identify TOP 3 choke points with tickers. Return ONLY JSON: {"trend","supply_chain":[...],"bottlenecks":[{"name","why_bottleneck","tickers":[...],"market_concentration","substitutability"}],"top_pick","thesis_summary"}'};
+
+/* ═══════════════ SIM ENGINE (deterministic, mirrors pipeline) ═══════════════ */
+const HL=["13F season: mega-cap managers adding to bottleneck suppliers","Congressional disclosure flags semicon-equipment purchases","Sanctions enforcement tightens; chemical-tanker freight rates spike","CoWoS capacity sold out through next year","Helium-3 supply tightens as quantum programs scale","CDMO lead times stretch to 18 months","Transformer lead times exceed 100 weeks","Dark-fleet rerouting disrupts refined product flows","Rare-earth export controls discussed; drone-motor makers scramble","Pharma glass capacity booked out; vial ecosystem at full utilization"];
+function simReports(t,ind,fund,score){const rnd=rngFor("RPT:"+t);const pick=[0,1,2].map(()=>Math.floor(rnd()*HL.length));const newsScore=+(rnd()-0.4).toFixed(2);const sentScore=+(rnd()*1.1-0.5).toFixed(2);const geoScore=+(rnd()*1.0-0.2).toFixed(2);
+const tech=`Price $${ind.close.toFixed(2)} | SMA20 ${ind.sma20?.toFixed(2)} / SMA50 ${ind.sma50?.toFixed(2)} / SMA200 ${ind.sma200?.toFixed(2)}\nRSI14 ${ind.rsi?.toFixed(1)} — ${ind.rsi>70?"overbought, correction risk":ind.rsi>55?"constructive momentum":ind.rsi>40?"neutral tape":"oversold"}\nMACD ${ind.macd?.toFixed(2)} vs signal ${ind.signal?.toFixed(2)} (hist ${ind.hist>=0?"+":""}${ind.hist?.toFixed(2)})\nPrice ${ind.close>ind.bbU?"above upper BB (stretched)":ind.close<ind.bbL?"below lower BB (capitulation)":"inside Bollinger band"}; ATR14 ${ind.atr?.toFixed(2)}\nKey Points Summary:\n• Trend: ${ind.close>ind.sma50?"above":"below"} 50-DMA, ${ind.close>ind.sma200?"above":"below"} 200-DMA\n• 5d ${ind.r5?.toFixed(1)}% / 20d ${ind.r20?.toFixed(1)}%\n• Annualized vol ${(ind.annVol*100).toFixed(0)}%`;
+const news=`Impact score: ${newsScore>=0?"+":""}${newsScore}\n• ${HL[pick[0]]}\n• ${HL[pick[1]]}\n• ${HL[pick[2]]}\nKey Points Summary:\n• Flow headlines favor physical-bottleneck names\n• Policy/sanctions cadence accelerating rerouting premiums`;
+const sent=`Score: ${sentScore>=0?"+":""}${sentScore}\nCrowd positioning ${sentScore>0.2?"constructive":sentScore<-0.2?"fearful, contrarian interest":"mixed"}; shadow-supply-chain chatter ${geoScore>0.4?"elevated (port seizures, dark fleet)":"quiet"}.`;
+const fundR=`Gross margin ${(fund.grossMargin*100).toFixed(1)}% / op margin ${(fund.operMargin*100).toFixed(1)}% | Fwd P/E ${fund.forwardPE?.toFixed(1)} | Mkt cap ${fmtMC(fund.marketCap)}\nAssessment: ${fund.grossMargin>0.4?"high margins = pricing power (bottleneck signal)":fund.forwardPE<15?"modest valuation":"premium valuation requires durable growth"}.`;
+const geo=`Risk-premium score: ${geoScore>=0?"+":""}${geoScore}\n${geoScore>0.3?"Disruption WORSENING → bearish for broad market, BULLISH for Shadow Alpha bottleneck assets (pricing power accrues to choke-point owners). Flag explicitly.":"Disruption contained; risk premium modest."}`;
+return{technical:tech,news,sentiment:sent,fundamentals:fundR,geopolitical:geo,newsScore,sentScore,geoScore};}
+function simPipeline(t,ind,fund,score,rpt){const rnd=rngFor("PIP:"+t);const bull=`Momentum confirms: YTD ${score.ytd}% with SPY correlation only ${score.correlation}. Gross margin ${(fund.grossMargin*100).toFixed(0)}% = pricing power. Geopolitical risk premium +${rpt.geoScore} accrues to choke-point owners. Independence score ${score.independence}/25 = true alpha, not beta.`;
+const bear=`Valuation risk: fwd P/E ${fund.forwardPE.toFixed(1)}. Max drawdown ${score.max_dd}% and vol ${(ind.annVol*100).toFixed(0)}% imply rough ride. RSI ${ind.rsi?.toFixed(0)} leaves ${ind.rsi>60?"overbought correction":"momentum doubt"} open. Concentration risk if thesis crowded.`;
+const winBull=(score.total>=50&&score.ytd>=0);const verdict={winner:winBull?"BULL":"BEAR",confidence:+(0.55+rnd()*0.35).toFixed(2),rationale:winBull?"Trend + independence + pricing power outweigh valuation concerns.":"Risk/reward skewed by valuation and volatility."};
+const buy=winBull&&score.total>=45;const trader={action:buy?"BUY":(!winBull&&score.ytd<-10?"SELL":"HOLD"),position_pct:buy?clamp(10,100,Math.round(score.total+rnd()*20)):0,confidence:verdict.confidence,rationale:buy?"Accumulate physical bottleneck; uncorrelated alpha.":"Wait for better entry."};
+const riskScore=clamp(1,10,Math.round(ind.annVol*20+Math.abs(score.max_dd)*0.15));const risk={Aggressive:"Size up — asymmetry is the point.",Neutral:"Scale in; hedge with SPY puts.",Safe:"Drawdown "+score.max_dd+"% is unacceptable at full size."};const riskAdj={adjusted_action:riskScore>=8&&trader.action==="BUY"?"HOLD":trader.action,adjusted_position_pct:Math.round(trader.position_pct*(1-riskScore/25)),risk_score:riskScore,risk_notes:"Vol-scaled trim applied."};
+const final={approved:true,final_action:riskAdj.adjusted_action,final_position_pct:riskAdj.adjusted_position_pct,notes:"Approved per 5-stage review. Shadow Alpha thesis "+(buy?"intact":"not confirmed")+"."};
+return{verdict,bull,bear,risk,riskAdj,trader,final};}
+
+/* ═══════════════ 5-STAGE PIPELINE (AI with SIM fallback) ═══════════════ */
+async function runPipeline(t,onStage){const s=await getSeries(t);const spy=await getSeries("SPY");const ind=indicators(s);const fund={...synthFund(t,s),operMargin:synthFund(t,s).grossMargin*0.45};const score=shadowAlphaScore(s,spy)||{total:0,ytd:0,correlation:0.5,max_dd:0};const rpt=simReports(t,ind,fund,score);
+const analysts={};
+const tryAI=async(kind,sys,data)=>{if(!AI())return null;return await llm(sys,"Ticker: "+t+"\n"+data);}
+onStage(1,"Analyst Team (5 agents)","running");
+for(const[k,sys,data]of[["technical",P.TECH,JSON.stringify(ind)],["news",P.NEWS,"Headlines:\n"+HL.slice(0,4).map(h=>"• "+h).join("\n")],["sentiment",P.SENT,"Headlines: "+JSON.stringify(HL.slice(0,3))],["fundamentals",P.FUND,JSON.stringify(fund)],["geopolitical",P.GEOPOL,"Sector: "+fund.sector]]){analysts[k]=(await tryAI(k,sys,data))||rpt[k];}
+onStage(1,"Analyst Team",Object.entries(analysts).map(([k,v])=>"— "+k.toUpperCase()+" —\n"+v).join("\n\n"));
+onStage(2,"Bull vs Bear Debate","running");
+let bull=rpt? (AI()?await llm(P.BULL,"Reports:\n"+Object.values(analysts).join("\n").slice(0,1500)):null):null;bull=bull||simPipeline(t,ind,fund,score,rpt).bull;
+let bear=AI()?await llm(P.BEAR,"Reports:\n"+Object.values(analysts).join("\n").slice(0,1500)+"\nBULL says: "+bull):null;bear=bear||simPipeline(t,ind,fund,score,rpt).bear;
+let verdict=AI()?extractJSON(await llm(P.JUDGE,"DEBATE:\n[BULL]\n"+bull+"\n[BEAR]\n"+bear,{temperature:0.2,json:true})):null;verdict=verdict&&verdict.winner?verdict:simPipeline(t,ind,fund,score,rpt).verdict;
+onStage(2,"Bull vs Bear Debate + Judge","[BULL]\n"+bull+"\n\n[BEAR]\n"+bear+"\n\nVERDICT: "+verdict.winner+" (conf "+verdict.confidence+")\n"+(verdict.rationale||""));
+onStage(3,"Trader","running");
+let trader=AI()?extractJSON(await llm(P.TRADER,"Reports + verdict: "+verdict.winner,{temperature:0.3,json:true})):null;trader=trader&&trader.action?trader:simPipeline(t,ind,fund,score,rpt).trader;
+onStage(3,"Trader",JSON.stringify(trader,null,1));
+onStage(4,"Risk Team","running");
+const risk={};for(const[k,sys]of[["Aggressive",P.RISK_AGG],["Neutral",P.RISK_NEU],["Safe",P.RISK_SAFE]])risk[k]=(AI()?await llm(sys,"Trader plan: "+JSON.stringify(trader)):null)||simPipeline(t,ind,fund,score,rpt).risk[k];
+let riskAdj=AI()?extractJSON(await llm(P.RISK_JUDGE,"TRADER: "+JSON.stringify(trader)+"\nRISK: "+Object.values(risk).join("\n"),{json:true})):null;riskAdj=riskAdj&&riskAdj.adjusted_action?riskAdj:simPipeline(t,ind,fund,score,rpt).riskAdj;
+onStage(4,"Risk Management",Object.entries(risk).map(([k,v])=>"["+k+"] "+v).join("\n")+"\nADJUSTED: "+JSON.stringify(riskAdj));
+onStage(5,"Fund Manager","running");
+let final=AI()?extractJSON(await llm(P.MANAGER,"TRADER: "+JSON.stringify(trader)+" RISK-ADJ: "+JSON.stringify(riskAdj),{json:true})):null;final=final&&final.final_action?final:simPipeline(t,ind,fund,score,rpt).final;
+onStage(5,"Fund Manager Verdict",JSON.stringify(final,null,1));
+memory.push({date:new Date().toISOString().slice(0,16).replace("T"," "),ticker:t,action:final.final_action,position_pct:final.final_position_pct,notes:String(final.notes||"").slice(0,200)});LS.set("saf_memory",memory);
+return{ind,fund,score,verdict,trader,riskAdj,final};}
+
+/* ═══════════════ UI: ROUTER ═══════════════ */
+$("#nav").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;state.tab=b.dataset.tab;document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("on",x===b));render();});
+function render(){({dash:renderDash,screener:renderScreener,agents:renderAgents,memory:renderMemory,diag:renderDiag,settings:renderSettings})[state.tab]();}
+function pills(){$("#pillAI").textContent=AI()?"AI LIVE":"AI OFF";$("#pillAI").className="pill "+(AI()?"ok":"off");$("#pillData").textContent=state.settings.live?"LIVE DATA":"SIM DATA";$("#pillData").className="pill "+(state.settings.live?"ok":"off");}
+
+/* ═══════════════ DASHBOARD (SAF.py options 1-5) ═══════════════ */
+async function renderDash(){$("#main").innerHTML=`<div class="wrap">
+<div class="card"><h1>🦅 Skia Alpha Fund — Dashboard</h1><div class="sub" id="dsub">loading…</div>
+<div class="row"><input id="q" placeholder="🔍 Search ticker…" style="width:220px"><button class="btn" id="ref">🔄 Refresh</button><button class="btn gold" id="exp">💾 Export CSV</button><button class="btn ghost" id="all">🏷️ All Tickers</button></div></div>
+<div id="sres"></div>
+<div class="grid2"><div class="card"><h2>📈 All Baskets Performance</h2><div class="tbl" id="dt"></div></div>
+<div class="card"><h2>🏆 YTD Ranking</h2><div class="tbl" id="rt"></div></div></div>
+<div class="card" id="allc" hidden><h2>🏷️ All Tickers</h2><div id="at"></div></div></div>`;
+$("#ref").onclick=()=>{seriesCache.clear();renderDash();};
+$("#exp").onclick=async()=>{const rows=[["Basket","Ticker","Weight","Price","YTD_%"]];for(const b in BASKETS){const h=BASKETS[b];for(const t in h){const s=await getSeries(t);rows.push([b,t,h[t],s.at(-1).p.toFixed(2),(periodReturn(s,"YTD")||0).toFixed(2)]);}}downloadCSV("skia_alpha_tickers.csv",rows);};
+$("#all").onclick=async()=>{const c=$("#allc");c.hidden=!c.hidden;if(c.hidden)return;let html="";for(const sec in SECTIONS){for(const n of SECTIONS[sec]){if(!BASKETS[n])continue;const h=BASKETS[n];html+=`<h3 style="margin:12px 0 4px">${n}</h3><table><tr><th>Ticker</th><th class="r">Weight</th><th class="r">Price</th><th class="r">YTD</th></tr>`;for(const t in h){const s=await getSeries(t);html+=`<tr><td><b>${t}</b></td><td class="r">${h[t].toFixed(1)}</td><td class="r">$${s.at(-1).p.toFixed(2)}</td><td class="r">${fmtPct(periodReturn(s,"YTD"))}</td></tr>`;}html+="</table>";}}$("#at").innerHTML=html;};
+$("#q").oninput=async e=>{const q=e.target.value.toUpperCase().trim();if(!q){$("#sres").innerHTML="";return;}const found=[];for(const b in BASKETS)if(BASKETS[b][q]!=null)found.push([b,BASKETS[b][q]]);$("#sres").innerHTML=found.length?`<div class="card"><h2>✅ '${q}' in ${found.length} basket(s)</h2><table><tr><th>Basket</th><th class="r">Weight</th></tr>${found.map(f=>`<tr><td>${f[0]}</td><td class="r">${f[1].toFixed(1)}</td></tr>`).join("")}</table></div>`:`<div class="card">❌ '${q}' not found.</div>`;};
+const tickers=uniqueTickers();if(!tickers.includes("SPY"))tickers.push("SPY");
+const pdf={};for(const t of tickers)pdf[t]=await getSeries(t);
+$("#dsub").textContent=new Date().toLocaleString()+" · "+Object.keys(BASKETS).length+" baskets · "+tickers.length+" tickers";
+const bRet=(h,d)=>{let tw=0,wr=0,n=0;for(const t in h){const r=periodReturn(pdf[t],d);if(r!=null){wr+=r*(h[t]/Object.values(h).reduce((a,b)=>a+b,0));n++;}}return n?wr:null;};
+let html=`<table><tr><th>Basket</th><th class="r">1D</th><th class="r">1W</th><th class="r">1M</th><th class="r">YTD</th></tr>`;
+const listed=new Set();for(const sec in SECTIONS){html+=`<tr class="secrow"><td colspan="5">── ${sec} ──</td></tr>`;for(const n of SECTIONS[sec]){listed.add(n);if(!BASKETS[n])continue;const h=BASKETS[n];html+=`<tr><td>${n}</td><td class="r">${fmtPct(bRet(h,1))}</td><td class="r">${fmtPct(bRet(h,7))}</td><td class="r">${fmtPct(bRet(h,30))}</td><td class="r">${fmtPct(bRet(h,"YTD"))}</td></tr>`;}}
+const custom=Object.keys(BASKETS).filter(b=>!listed.has(b));if(custom.length){html+=`<tr class="secrow"><td colspan="5">──  AI-ADDED BASKETS ──</td></tr>`;for(const n of custom){const h=BASKETS[n];html+=`<tr><td>${n}</td><td class="r">${fmtPct(bRet(h,1))}</td><td class="r">${fmtPct(bRet(h,7))}</td><td class="r">${fmtPct(bRet(h,30))}</td><td class="r">${fmtPct(bRet(h,"YTD"))}</td></tr>`;}}
+$("#dt").innerHTML=html+"</table>";
+const perf=Object.keys(BASKETS).map(n=>[n,bRet(BASKETS[n],"YTD")]).filter(x=>x[1]!=null).sort((a,b)=>b[1]-a[1]);
+$("#rt").innerHTML=`<table><tr><th class="c">#</th><th>Basket</th><th class="r">YTD</th></tr>`+perf.map((p,i)=>`<tr><td class="c" style="color:${i<5?"var(--pos)":i>=perf.length-3?"var(--neg)":"inherit"};font-weight:700">${i+1}</td><td>${p[0]}</td><td class="r">${fmtPct(p[1])}</td></tr>`).join("")+"</table>";pills();}
+
+/* ═══════════════ SCREENER (sfascreener.py options 1-10) ═══════════════ */
+function renderScreener(){$("#main").innerHTML=`<div class="wrap"><div class="card"><h1>🔍 SAF Screener + AI</h1><div class="sub">Shadow Alpha Asset Discovery Engine · threshold ≥55 · bottleneck pass ≥22/30</div></div>
+<div class="grid-tools"><div class="card tools">
+<button data-t="screen" class="on">📡 Full Screen (All Candidates)</button>
+<button data-t="deep">🔍 Deep Analysis (Single Ticker)</button>
+<button data-t="bot">🧮 Bottleneck Scoring (6-criteria)</button>
+<button data-t="uni">📋 View / Edit Universe</button>
+<button data-t="cmp">📊 Compare Top Candidates</button>
+<button data-t="sup">🤖 AI Supply Chain Discovery</button>
+<button data-t="abot">🤖 AI Bottleneck Analysis</button>
+<button data-t="adeep">🤖 AI Deep Report (Full Memo)</button>
+</div><div class="card" id="out"><div class="dim">Select a tool…</div></div></div></div>`;
+document.querySelectorAll(".tools button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tools button").forEach(x=>x.classList.toggle("on",x===b));SCREENER[b.dataset.t]();});
+SCREENER.screen();}
+const SCREENER={
+async screen(){const out=$("#out");out.innerHTML=`<h2>📡 Full Universe Scan</h2><div class="sub" id="prog">…</div><div id="res"></div>`;const ts=[...universeTickers(),"SPY"];const spy=await getSeries("SPY");const rows=[];for(let i=0;i<ts.length;i++){if(ts[i]==="SPY")continue;$("#prog").innerHTML=`<span class="loader"></span> scoring ${i+1}/${ts.length} — ${ts[i]}`;const s=await getSeries(ts[i]);const sc=shadowAlphaScore(s,spy);if(sc){sc.ticker=ts[i];rows.push(sc);}await sleep(0);}
+rows.sort((a,b)=>b.total-a.total);state.lastScreen=rows;
+const cand=rows.filter(r=>r.total>=55).length,watch=rows.filter(r=>r.total>=45&&r.total<55).length;
+$("#prog").textContent=`🎯 ${cand} CANDIDATES (≥55) · 👀 ${watch} WATCH (45-54)`;
+$("#res").innerHTML=`<div class="tbl"><table><tr><th>#</th><th>Ticker</th><th class="r">Price</th><th class="r">YTD</th><th class="r">Corr</th><th class="r">MaxDD</th><th class="r">Trend</th><th class="r">Indep</th><th class="r">RelStr</th><th class="r">Stab</th><th class="r">TOTAL</th><th class="c">Signal</th></tr>`+rows.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r.ticker}</b></td><td class="r">$${r.price}</td><td class="r">${fmtPct(r.ytd)}</td><td class="r">${r.correlation}</td><td class="r">${r.max_dd}%</td><td class="r">${r.trend}</td><td class="r">${r.independence}</td><td class="r">${r.rel_strength}</td><td class="r">${r.stability}</td><td class="r"><b>${r.total}</b></td><td class="c">${r.total>=55?'<span class="sig buy">🎯 CANDIDATE</span>':r.total>=45?'<span class="sig watch">👀 WATCH</span>':'<span class="sig none">—</span>'}</td></tr>`).join("")+`</table></div><br><button class="btn gold" id="csv">💾 Export saf_screener_results.csv</button>`;
+$("#csv").onclick=()=>downloadCSV("saf_screener_results.csv",[["ticker","price","ytd","correlation","max_dd","trend","independence","rel_strength","stability","total"],...rows.map(r=>[r.ticker,r.price,r.ytd,r.correlation,r.max_dd,r.trend,r.independence,r.rel_strength,r.stability,r.total])]);},
+async deep(){const out=$("#out");out.innerHTML=`<h2>🔍 Deep Analysis</h2><div class="row"><input id="tk" placeholder="Ticker" value="MKSI" style="width:110px"><button class="btn" id="go">Run</button></div><div id="dr"></div>`;$("#go").onclick=async()=>{const t=$("#tk").value.toUpperCase().trim();const s=await getSeries(t);const spy=await getSeries("SPY");const ind=indicators(s);const f={...synthFund(t,s)};f.operMargin=f.grossMargin*0.45;const sc=shadowAlphaScore(s,spy);const inB=[...new Set(Object.keys(BASKETS).filter(b=>BASKETS[b][t]!=null))];
+$("#dr").innerHTML=`<h3 style="margin-top:14px">STAGE 4 — INVESTABILITY</h3><div class="panel"><div class="kv"><b>Market Cap &gt; $500M</b><span>${fmtMC(f.marketCap)} ${f.marketCap>5e8?"✅":"❌"}</span><b>Price &gt; $5</b><span>$${f.price.toFixed(2)} ${f.price>5?"✅":"❌"}</span><b>Avg Volume &gt; 100K</b><span>${f.avgVolume.toLocaleString()} ${f.avgVolume>1e5?"✅":"❌"}</span></div></div>
+<h3>STAGE 5 — QUANT VALIDATION</h3><div class="panel"><div class="kv"><b>YTD</b><span>${fmtPct(sc.ytd)}</span><b>SPY Correlation</b><span>${sc.correlation} ${sc.correlation<0.5?"✅ low (physical driver)":sc.correlation<0.75?"⚠️ mixed":"❌ beta play"}</span><b>Max Drawdown</b><span>${sc.max_dd}%</span><b>Composite</b><span><b>${sc.total}/100</b> ${sc.total>=55?"🎯":sc.total>=45?"👀":""}</span></div></div>
+<h3>FUNDAMENTALS</h3><div class="panel"><div class="kv"><b>Company</b><span>${f.name}</span><b>Sector</b><span>${f.sector}</span><b>Gross Margin</b><span>${(f.grossMargin*100).toFixed(1)}% ${f.grossMargin>0.4?"✅ pricing power":""}</span><b>Fwd P/E</b><span>${f.forwardPE.toFixed(1)}</span></div></div>
+<h3>SAF CROSS-REFERENCE</h3><div class="panel">${inB.length?"⚠️ already in: "+inB.join(", "):"✅ NOT yet in SAF → potential new addition"}</div>
+<h3>🤖 FUND MANAGER MEMO</h3><div class="panel buy"><pre class="memo" id="memo"><span class="loader"></span></pre></div>`;
+let memo=null;if(AI())memo=await llm(P.DEEP,`Ticker: ${t}\nSCORE: ${JSON.stringify(sc)}\nFUNDAMENTALS: ${JSON.stringify(f)}\nIN SAF: ${inB.length?"yes":"no"}`,{temperature:0.4});
+if(!memo){const v=sc.total>=55?"BUY":sc.total>=45?"WATCH":"SKIP";memo=`VERDICT: ${v}\nTHESIS: ${t} screens as a Shadow Alpha candidate — YTD ${sc.ytd}% vs SPY with correlation ${sc.correlation} (independence ${sc.independence}/25). Gross margin ${(f.grossMargin*100).toFixed(0)}% signals pricing power at a physical choke point.\nRISK: drawdown ${sc.max_dd}%; vol ${(ind.annVol*100).toFixed(0)}% annualized.\nCATALYST: supply-disruption headline flow / 13F confirmation.\nSIZING: ${sc.total>=65?"2x":sc.total>=55?"1x":"0.5x"}\nGEOPOLITICAL ANGLE: asset benefits from rerouting & sanctions premiums — higher disruption = stronger thesis.`;saveAI("deep_analysis",{ticker:t,memo});}
+$("#memo").textContent=memo;};},
+async bot(){const out=$("#out");const CRIT=[["Market Concentration","Do ≤5 companies control >70% of supply?"],["Substitutability","Is there NO viable alternative?"],["Capital Intensity","&gt;$1B and &gt;5y to build a competitor?"],["Regulatory Moat","Permits/patents blocking entrants?"],["Demand Inelasticity","Will buyers pay ANY price?"],["Cross-Sector Demand","Needed by MULTIPLE growing industries?"]];
+out.innerHTML=`<h2>🧮 Interactive Bottleneck Scoring</h2><div class="row"><input id="tk" value="MKSI" style="width:110px"><button class="btn" id="go">Score</button></div><div id="ai"></div><div id="form"></div>`;
+$("#go").onclick=async()=>{const t=$("#tk").value.toUpperCase().trim();$("#ai").innerHTML=`<div class="panel"><span class="loader"></span> AI pre-scoring…</div>`;
+let ai=null;if(AI())ai=extractJSON(await llm(P.BOTTLE,`Ticker: ${t}`,{json:true,temperature:0.3}));
+if(!ai){const rnd=rngFor("BOT:"+t);const sc=CRIT.map(()=>1+Math.floor(rnd()*5));ai={company_name:t,what_they_do:"Physical choke-point supplier",scores:Object.fromEntries(CRIT.map((c,i)=>[c[0].toLowerCase().replace(/ /g,"_"),sc[i]])),total:sc.reduce((a,b)=>a+b,0),reasoning:Object.fromEntries(CRIT.map(c=>[c[0].toLowerCase().replace(/ /g,"_"),"Heuristic estimate from sector profile"])),verdict:"reference",key_risk:"Demand substitution"};saveAI("bottleneck_analysis",{ticker:t,ai});}
+$("#ai").innerHTML=`<h3>🤖 AI SUGGESTION</h3><div class="panel"><div class="kv"><b>Company</b><span>${ai.company_name||t}</span><b>AI Total</b><span>${ai.total}/30</span><b>Key risk</b><span>${ai.key_risk||"—"}</span></div></div>`;
+$("#form").innerHTML=`<h3 style="margin-top:10px">YOUR SCORING (pass ≥22/30)</h3>`+CRIT.map((c,i)=>`<div class="panel"><b>${c[1]}</b><div class="stepper" style="margin-top:6px"><button onclick="step(${i},-1)">−</button><span class="v" id="v${i}">3</span><button onclick="step(${i},1)">+</button></div></div>`).join("")+`<button class="btn gold" id="tot">Compute</button><div id="tres"></div>`;
+window.step=(i,d)=>{const e=$("#v"+i);e.textContent=clamp(1,5,+e.textContent+d);};
+$("#tot").onclick=()=>{const vals=CRIT.map((_,i)=>+$("#v"+i).textContent);const total=vals.reduce((a,b)=>a+b,0);$("#tres").innerHTML=`<div class="panel ${total>=22?"buy":"sell"}"><h3>${total>=22?"🎯 TRUE SHADOW ALPHA BOTTLENECK":"❌ Does NOT qualify"} — ${total}/30 (AI: ${ai.total})</h3></div>`;saveAI("bottleneck_scoring",{ticker:t,total,qualified:total>=22});};};},
+uni(){const out=$("#out");let html=`<h2>🌍 Candidate Universe</h2>`;for(const s in UNIVERSE){html+=`<div class="panel"><h3>${s} <span class="dim">(${UNIVERSE[s].length})</span></h3>`+UNIVERSE[s].map(t=>`<span class="chip">${t}</span>`).join("")+`</div>`;}
+html+=`<div class="row" style="margin-top:10px"><select id="sec">${Object.keys(UNIVERSE).map(s=>`<option>${s}</option>`).join("")}</select><input id="nt" placeholder="TICKER" style="width:110px"><button class="btn" id="add">➕ Add</button><input id="rt2" placeholder="TICKER" style="width:110px"><button class="btn ghost" id="rem">🗑️ Remove</button></div>`;
+out.innerHTML=html;
+$("#add").onclick=()=>{const s=$("#sec").value,t=$("#nt").value.toUpperCase().trim();if(t&&!UNIVERSE[s].includes(t)){UNIVERSE[s].push(t);saveUniverse();SCREENER.uni();}};
+$("#rem").onclick=()=>{const t=$("#rt2").value.toUpperCase().trim();for(const s in UNIVERSE)UNIVERSE[s]=UNIVERSE[s].filter(x=>x!==t);saveUniverse();SCREENER.uni();};},
+cmp(){const out=$("#out");if(!state.lastScreen){out.innerHTML=`<div class="dim">Run Full Screen first.</div>`;return;}
+out.innerHTML=`<h2>🏆 Top Candidates</h2>`+`<table><tr><th>Ticker</th><th class="r">Price</th><th class="r">YTD</th><th class="r">Corr</th><th class="r">Score</th></tr>`+state.lastScreen.slice(0,10).map(r=>{const inS=Object.values(BASKETS).some(h=>h[r.ticker]!=null);return `<tr><td><b>${r.ticker}</b>${inS?' <span style="color:var(--gold2)">●</span>':""}</td><td class="r">$${r.price}</td><td class="r">${fmtPct(r.ytd)}</td><td class="r">${r.correlation}</td><td class="r"><b>${r.total}</b></td></tr>`;}).join("")+`</table><div class="sub" style="margin-top:6px">● = already in SAF baskets</div>`;},
+async sup(){const out=$("#out");out.innerHTML=`<h2>🤖 AI Supply Chain Discovery</h2><div class="row"><input id="tr" style="flex:1" value="solid-state batteries for electric vehicles"><button class="btn" id="go">Map</button></div><div id="r"></div>`;
+$("#go").onclick=async()=>{const trend=$("#tr").value;$("#r").innerHTML=`<div class="panel"><span class="loader"></span> mapping supply chain…</div>`;
+let res=null;if(AI())res=extractJSON(await llm(P.SUPPLY,"TREND: "+trend,{json:true,temperature:0.5}));
+if(!res){const rnd=rngFor("SUP:"+trend);const uni=universeTickers();const pick=n=>uni[Math.floor(rnd()*uni.length)];res={trend,supply_chain:["Raw materials","Refining & processing","Critical components","Capital equipment","Logistics","End product"],bottlenecks:[1,2,3].map(i=>({name:"Choke point "+i,why_bottleneck:"Oligopoly, no substitutes, >5y capex barrier",tickers:[pick(),pick()],market_concentration:"high",substitutability:"none"})),top_pick:pick(),thesis_summary:"Own the physical bottleneck, not the end product."};saveAI("supply_chain_discovery",{trend,res});}
+let html=`<h3>SUPPLY CHAIN MAP</h3><div class="panel">`+res.supply_chain.map((l,i)=>`${"&nbsp;&nbsp;".repeat(i)}└─ ${l}<br>`).join("")+`</div><h3>BOTTLENECKS</h3>`;res.bottlenecks.forEach((b,i)=>{html+=`<div class="panel"><h3>#${i+1} ${b.name}</h3><div class="kv"><b>Why</b><span>${b.why_bottleneck}</span><b>Tickers</b><span>${(b.tickers||[]).join(", ")}</span><b>Concentration</b><span>${b.market_concentration}</span></div></div>`;});
+html+=`<div class="panel buy"><h3>🎯 AI TOP PICK: ${res.top_pick}</h3>${res.thesis_summary||""}</div><button class="btn gold" id="addu">Add candidates to universe</button>`;
+$("#r").innerHTML=html;$("#addu").onclick=()=>{const name="AI: "+trend.slice(0,30);if(!UNIVERSE[name])UNIVERSE[name]=[];res.bottlenecks.forEach(b=>(b.tickers||[]).forEach(t=>{if(!UNIVERSE[name].includes(t))UNIVERSE[name].push(t);}));saveUniverse();$("#r").insertAdjacentHTML("beforeend",`<div class="panel buy">✅ Added to '${name}'</div>`);};};},
+async abot(){const out=$("#out");out.innerHTML=`<h2>🤖 AI Bottleneck Analysis</h2><div class="row"><input id="tk" value="MKSI" style="width:110px"><button class="btn" id="go">Analyze</button></div><div id="r"></div>`;
+$("#go").onclick=async()=>{const t=$("#tk").value.toUpperCase().trim();$("#r").innerHTML=`<div class="panel"><span class="loader"></span></div>`;let res=null;if(AI())res=extractJSON(await llm(P.BOTTLE,`Ticker: ${t} — full Shadow Alpha bottleneck analysis`,{json:true,temperature:0.3}));
+if(!res){const rnd=rngFor("BOT:"+t);const sc=["market_concentration","substitutability","capital_intensity","regulatory_moat","demand_inelasticity","cross_sector_demand"].map(k=>[k,1+Math.floor(rnd()*5)]);res={company_name:t,what_they_do:"Choke-point supplier",scores:Object.fromEntries(sc),total:sc.reduce((a,b)=>a+b[1],0),verdict:sc.reduce((a,b)=>a+b[1],0)>=22?"TRUE BOTTLENECK":"NOT A BOTTLENECK",key_risk:"Substitution / demand shift"};saveAI("ai_bottleneck_analysis",{ticker:t,res});}
+$("#r").innerHTML=`<div class="panel"><div class="kv"><b>Company</b><span>${res.company_name}</span><b>Does</b><span>${res.what_they_do}</span></div></div><table><tr><th>Criterion</th><th class="c">Score</th></tr>`+Object.entries(res.scores||{}).map(([k,v])=>`<tr><td>${k.replace(/_/g," ")}</td><td class="c" style="color:${v>=4?"var(--pos)":v>=3?"var(--hold)":"var(--neg)"};font-weight:700">${v}/5</td></tr>`).join("")+`<tr><td><b>TOTAL</b></td><td class="c"><b>${res.total}/30</b></td></tr></table><div class="panel ${res.total>=22?"buy":"sell"}" style="margin-top:8px"><h3>${res.total>=22?"🏆 TRUE BOTTLENECK — passes (≥22)":"❌ BELOW THRESHOLD"}</h3>Key risk: ${res.key_risk||"—"}</div>`;};},
+async adeep(){const out=$("#out");out.innerHTML=`<h2>🤖 AI Deep Report</h2><div class="row"><input id="tk" value="MKSI" style="width:110px"><button class="btn" id="go">Generate</button></div><div id="r"></div>`;
+$("#go").onclick=async()=>{const t=$("#tk").value.toUpperCase().trim();const s=await getSeries(t);const spy=await getSeries("SPY");const sc=shadowAlphaScore(s,spy);const f=synthFund(t,s);$("#r").innerHTML=`<div class="panel"><span class="loader"></span> writing memo…</div>`;
+let memo=null;if(AI())memo=await llm(P.DEEP,`Ticker: ${t}\nSCORE: ${JSON.stringify(sc)}\nFUNDAMENTALS: ${JSON.stringify(f)}`,{temperature:0.4});
+if(!memo){const v=sc.total>=55?"BUY":sc.total>=45?"WATCH":"SKIP";memo=`VERDICT: ${v}\nTHESIS: independence ${sc.independence}/25 & correlation ${sc.correlation} → non-consensus driver.\nRISK: MDD ${sc.max_dd}%.\nCATALYST: disruption headline flow.\nSIZING: ${sc.total>=65?"2x":sc.total>=55?"1x":"0.5x"}\nGEOPOLITICAL ANGLE: benefits from supply-chain disruption.`;saveAI("ai_deep_report",{ticker:t,memo});}
+$("#r").innerHTML=`<div class="panel buy"><pre class="memo">${memo}</pre></div>`;};}};
+
+/* ═══════════════ TRADINGAGENTS TAB (TradingAgents.py) ═══════════════ */
+function renderAgents(){$("#main").innerHTML=`<div class="wrap">
+<div class="card"><h1>⚛️ TradingAgents — 5-Stage Firm Simulation</h1><div class="sub">Analysts → Bull/Bear Debate → Trader → Risk Team → Fund Manager · ${AI()?"Groq AI live":"deterministic SIM engine"}</div>
+<div class="row"><input id="tk" value="NVDA" style="width:110px"><button class="btn gold" id="go">▶ Run Pipeline</button></div></div>
+<div id="tl"></div>
+<div class="card"><h2>📦 Batch Run by Basket</h2><div class="row"><select id="bk">${Object.keys(BASKETS).map(b=>`<option>${b}</option>`).join("")}<option>ALL</option></select><button class="btn" id="bgo">Run Batch</button></div><div class="sub" id="bprog"></div><div id="bres"></div></div></div>`;
+$("#go").onclick=async()=>{const t=$("#tk").value.toUpperCase().trim();$("#tl").innerHTML="";const mk=(n,title)=>{const d=document.createElement("div");d.className="card stage";d.innerHTML=`<div class="n">${n}</div><div class="b"><h3>${title}</h3><div class="txt" id="s${n}"><span class="loader"></span></div></div>`;$("#tl").appendChild(d);return d;};
+const stages={1:mk(1,"I. ANALYST TEAM (5 agents)"),2:mk(2,"II. RESEARCH TEAM — Bull vs Bear"),3:mk(3,"III. TRADER"),4:mk(4,"IV. RISK MANAGEMENT TEAM"),5:mk(5,"V. FUND MANAGER")};
+const res=await runPipeline(t,(n,title,txt)=>{const e=$("#s"+n);if(e)e.innerHTML=txt==="running"?'<span class="loader"></span>':("<pre class='memo'>"+txt+"</pre>");});
+const a=res.final.final_action;const col=a==="BUY"?"buy":a==="SELL"?"sell":"hold";
+$("#tl").insertAdjacentHTML("beforeend",`<div class="panel ${col}"><h3 style="font-size:18px">FINAL SIGNAL: ${a} · ${res.final.final_position_pct}% · Approved: ${res.final.approved}</h3><div class="sub">${res.final.notes||""}</div><div class="row"><button class="btn gold" id="adds">✅ Add to SAF (AI correlation)</button></div><div id="asg"></div></div>`);
+$("#adds").onclick=async()=>{let asg=null;if(AI())asg=extractJSON(await llm(P.CORRELATE,`TICKER: ${t}\nFINAL: ${a}\nBASKETS: ${Object.keys(BASKETS).slice(0,25).join(", ")}`,{json:true,temperature:0.3}));
+if(!asg){const rnd=rngFor("COR:"+t);const names=Object.keys(BASKETS);asg={recommended_basket:names[Math.floor(rnd()*names.length)],new_basket_needed:false,suggested_weight:+(0.5+Math.round(rnd()*5)*0.5).toFixed(1),thesis_fit:res.score.total>=55?"STRONG":"MODERATE",rationale:"Heuristic sector fit",correlation_notes:"low corr to book"};}
+$("#asg").innerHTML=`<div class="panel"><div class="kv"><b>Basket</b><span>${asg.recommended_basket||asg.new_basket_name||"🆕 "+t+" THESIS"}</span><b>Weight</b><span>${asg.suggested_weight}</span><b>Fit</b><span>${asg.thesis_fit}</span></div></div><button class="btn" id="cf">Confirm add</button>`;
+$("#cf").onclick=()=>{add_to_saf(t,+asg.suggested_weight||1,(asg.new_basket_needed&&asg.new_basket_name)||asg.recommended_basket||("🆕 "+t+" THESIS"));$("#asg").insertAdjacentHTML("beforeend",`<div class="panel buy">🎉 ${t} is now part of the Skia Alpha Fund!</div>`);};};};
+$("#bgo").onclick=async()=>{const name=$("#bk").value;const list=name==="ALL"?uniqueTickers().slice(0,15):Object.keys(BASKETS[name]||{});const rows=[];for(let i=0;i<list.length;i++){$("#bprog").innerHTML=`<span class="loader"></span> [${i+1}/${list.length}] ${list[i]}`;const r=await runPipeline(list[i],()=>{});rows.push({t:list[i],a:r.final.final_action,p:r.final.final_position_pct,w:r.verdict.winner});await sleep(50);}
+$("#bprog").textContent=`BUY: ${rows.filter(r=>r.a==="BUY").length} | SELL: ${rows.filter(r=>r.a==="SELL").length} | HOLD: ${rows.filter(r=>r.a==="HOLD").length}`;
+$("#bres").innerHTML=`<table><tr><th>#</th><th>Ticker</th><th class="c">Signal</th><th class="r">Size %</th><th class="c">Debate</th></tr>`+rows.map((r,i)=>`<tr><td>${i+1}</td><td><b>${r.t}</b></td><td class="c"><span class="sig ${r.a.toLowerCase()}">${r.a}</span></td><td class="r">${r.p}</td><td class="c">${r.w}</td></tr>`).join("")+`</table><br><button class="btn gold" id="bcsv">💾 Export batch CSV</button>`;
+$("#bcsv").onclick=()=>downloadCSV("tradingagents_batch.csv",[["ticker","action","position_pct","debate"],...rows.map(r=>[r.t,r.a,r.p,r.w])]);};pills();}
+
+/* ═══════════════ MEMORY / DIAG / SETTINGS ═══════════════ */
+function renderMemory(){$("#main").innerHTML=`<div class="wrap"><div class="card"><h1>🧠 Trading Memory — Decision History</h1><div class="sub">${memory.length} recorded decisions (trading_memory.jsonl equivalent)</div>
+<table><tr><th>#</th><th>Date</th><th>Ticker</th><th class="c">Action</th><th class="r">Size %</th><th>Notes</th></tr>`+memory.slice(-30).map((r,i)=>`<tr><td>${i+1}</td><td>${r.date}</td><td><b>${r.ticker}</b></td><td class="c"><span class="sig ${String(r.action).toLowerCase()}">${r.action}</span></td><td class="r">${r.position_pct}</td><td>${(r.notes||"").slice(0,120)}</td></tr>`).join("")+`</table><br><button class="btn ghost" id="clr">🗑️ Clear memory</button></div></div>`;
+$("#clr").onclick=()=>{memory.length=0;LS.set("saf_memory",memory);renderMemory();};}
+async function renderDiag(){$("#main").innerHTML=`<div class="wrap"><div class="card"><h1>🧪 System Diagnostics</h1><div class="sub" id="dp">running…</div><div id="dt"></div></div></div>`;const R=[];
+R.push(["Browser runtime",true,"JS engine operational"]);
+let net=false;try{await fetch("https://api.groq.com",{mode:"no-cors",signal:AbortSignal.timeout(6000)});net=true;}catch(e){}
+R.push(["Internet connectivity",net,net?"Groq/Yahoo reachable":"no connection"]);
+let yf=false,det="synthetic feed active (SIM)";if(net&&state.settings.live){const l=await fetchLive("SPY");yf=!!l;det=yf?"SPY live "+l.at(-1).p.toFixed(2):"live fetch failed";}else det+=" — enable Live in Settings";
+R.push(["Market data feed",true,det]);
+R.push(["GROQ_API_KEY present",AI(),AI()?"set":"NOT set — AI features use SIM"]);
+if(AI()){const p=await llm("You are a test. Reply with the single word: OK","ping",{temperature:0});R.push(["DEEP model ("+state.settings.deep+")",!!p,(p||"").slice(0,30)||"empty"]);}else R.push(["AI models",false,"skipped — no key"]);
+let w=true;try{localStorage.setItem("t","1");localStorage.removeItem("t");}catch(e){w=false;}
+R.push(["localStorage write",w,"baskets/memory/universe persist"]);
+R.push(["Basket config",true,Object.keys(BASKETS).length+" baskets, "+uniqueTickers().length+" tickers"]);
+R.push(["Candidate universe",true,Object.keys(UNIVERSE).length+" sectors, "+universeTickers().length+" candidates"]);
+const passed=R.filter(r=>r[1]).length;
+$("#dt").innerHTML=`<table><tr><th>Check</th><th class="c">Status</th><th>Detail</th></tr>`+R.map(r=>`<tr><td>${r[0]}</td><td class="c">${r[1]?'<span class="sig pass">✅ PASS</span>':'<span class="sig fail">❌ FAIL</span>'}</td><td>${r[2]}</td></tr>`).join("")+`</table><div class="panel ${passed===R.length?"buy":"hold"}" style="margin-top:10px"><h3>HEALTH SCORE: ${passed}/${R.length} checks passed</h3></div>`;
+$("#dp").textContent="complete";}
+function renderSettings(){$("#main").innerHTML=`<div class="wrap"><div class="card"><h1>⚙️ Settings</h1>
+<div class="panel"><div class="kv"><b>GROQ API KEY</b><span><input id="k" type="password" placeholder="gsk_…" style="width:320px" value="${state.settings.key||""}"> <button class="btn" id="show">👁</button></span>
+<b>Deep model</b><span><input id="md" value="${state.settings.deep}" style="width:260px"></span>
+<b>Fast model</b><span><input id="mf" value="${state.settings.fast}" style="width:260px"></span>
+<b>Live market data</b><span><input type="checkbox" id="lv" ${state.settings.live?"checked":""}> pull Yahoo Finance (CORS proxy)</span>
+<b>Debate rounds</b><span><input id="rd" type="number" min="1" max="4" value="${state.settings.rounds}" style="width:70px"></span></div>
+<br><button class="btn gold" id="sv">💾 Save</button> <span class="dim">Key stored locally in your browser only.</span></div></div>
+<div class="card"><h2>AI audit log (saf_ai_reports.json equivalent)</h2><div class="sub">${aiLog.length} entries</div><details><summary>View</summary><pre class="memo">${JSON.stringify(aiLog.slice(-10),null,1)}</pre></details></div></div>`;
+$("#show").onclick=()=>{const e=$("#k");e.type=e.type==="password"?"text":"password";};
+$("#sv").onclick=()=>{state.settings={key:$("#k").value.trim(),live:$("#lv").checked,deep:$("#md").value.trim()||"openai/gpt-oss-120b",fast:$("#mf").value.trim()||"openai/gpt-oss-20b",rounds:+$("#rd").value||2};LS.set("saf_settings",state.settings);pills();renderSettings();};pills();}
+
+pills();render();
+</script>
+</body>
+</html>

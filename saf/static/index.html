@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skia Alpha Fund v4 — Live Terminal</title>
+<style>
+  :root { --bg:#0a0e17; --panel:#111827; --line:#1f2937; --txt:#e5e7eb;
+          --dim:#6b7280; --green:#10b981; --red:#ef4444; --cyan:#22d3ee; --amber:#f59e0b; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--txt); font-family:ui-monospace,Menlo,monospace;
+         font-size:13px; padding:16px; }
+  h1 { font-size:15px; color:var(--cyan); letter-spacing:1px; }
+  .sub { color:var(--dim); font-size:11px; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  .card h2 { font-size:12px; color:var(--cyan); margin-bottom:10px; text-transform:uppercase; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th { text-align:left; color:var(--dim); font-weight:normal; padding:4px 6px; border-bottom:1px solid var(--line); }
+  td { padding:4px 6px; border-bottom:1px solid #161d2b; }
+  .pos { color:var(--green); } .neg { color:var(--red); }
+  .badge { display:inline-block; font-size:9px; padding:1px 6px; border-radius:4px;
+           font-weight:bold; letter-spacing:0.5px; vertical-align:middle; }
+  .b-live   { background:#064e3b; color:#6ee7b7; }
+  .b-cached { background:#1e3a5f; color:#93c5fd; }
+  .b-sim    { background:#7c2d12; color:#fdba74; }
+  .verdict { display:inline-block; padding:1px 7px; border-radius:4px; font-weight:bold; }
+  .v-CANDIDATE { background:#064e3b; color:#6ee7b7; }
+  .v-WATCH     { background:#78350f; color:#fcd34d; }
+  .v-PASS      { background:#7f1d1d; color:#fca5a5; }
+  .kv { display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #161d2b; }
+  .kv span:first-child { color:var(--dim); }
+  #status { color:var(--amber); margin-bottom:12px; }
+  .footer { margin-top:16px; color:var(--dim); font-size:10px; text-align:center; }
+</style>
+</head>
+<body>
+  <h1>🦅 SKIA ALPHA FUND v4 · LIVE TERMINAL</h1>
+  <div class="sub">Shadow Alpha · read-only client · every number carries provenance</div>
+  <div id="status">⏳ connecting to server…</div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>System Health <span id="health-badge"></span></h2>
+      <div id="health"></div>
+    </div>
+    <div class="card">
+      <h2>Shadow Alpha Screen (Score v2 core) <span id="screen-badge"></span></h2>
+      <table>
+        <thead><tr><th>Ticker</th><th>Score</th><th>T</th><th>A</th><th>R</th><th>Verdict</th><th>Conf</th></tr></thead>
+        <tbody id="screen-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer" id="prov"></div>
+
+  <script src="client.js"></script>
+</body>
+</html>

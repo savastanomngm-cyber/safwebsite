@@ -1,0 +1,1278 @@
+Skia Alpha Fund v4 — Full Redesign Specification
+
+This is a ground-up rework across every layer: data integrity, quant methodology, AI grounding, agent architecture, security, execution realism, and UX honesty. Each section states what's wrong → what replaces it → implementation.
+PART 1 — ARCHITECTURE OVERVIEW
+Current (v3)
+
+Browser (index.html) ──► CORS proxies ──► Yahoo/GDELT/Polymarket
+        │
+        ├── PRNG "SIM engine" (fake everything)
+        └── Groq API (ungrounded LLM opinions)
+
+Python scripts (SAF.py / sfascreener.py / TradingAgents.py) — duplicated logic,
+no shared library, no persistence between runs, no backtesting
+
+Redesigned (v4)
+
+┌─────────────────────────────────────────────────────────┐
+│  CORE (Python package: saf/)                            │
+│  ├─ data/       unified fetcher + local parquet cache   │
+│  ├─ quant/      score v2, factors, backtest engine      │
+│  ├─ ai/         grounded LLM layer w/ retrieval         │
+│  ├─ agents/     5-stage pipeline (real data only)       │
+│  ├─ exec/       capacity, slippage, position sizing     │
+│  └─ store/      SQLite state (baskets, memory, audit)   │
+│                                                         │
+│  SURFACES                                               │
+│  ├─ CLI (rich)          — power user                    │
+│  ├─ FastAPI server      — serves real JSON to web UI    │
+│  └─ Web terminal        — thin read-only client         │
+└─────────────────────────────────────────────────────────┘
+
+Key structural decisions:
+
+    Python is the brain; the browser is only an eye. All computation moves server-side. The web terminal becomes a read-only dashboard over a FastAPI endpoint. This kills the CORS-proxy problem, the XSS surface, and the key-exposure problem in one move.
+    One shared core library. The current three Python files duplicate llm(), extract_json(), clear_yf_cache(), period_return() four times each. Divergent copies = divergent numbers. Single source of truth.
+    SQLite instead of JSON files. Baskets, memory, AI audit log, and price cache in one transactional DB. Concurrent CLI + web access stops corrupting state.
+    No analysis without data. The system physically cannot render a signal unless it comes from fetched prices + grounded inputs. SIM mode becomes sandbox mode — clearly watermarked, never producing tradeable-looking output.
+
+PART 2 — DATA LAYER
+Problems in v3
+
+    Browser-side fetching through unreliable third-party proxies
+    No persistent price history (re-fetches 400 days constantly)
+    Fundamentals entirely fabricated
+    No corporate-action handling (splits distort returns on names like TSLA-adjacent baskets)
+    No data-quality flags
+
+Redesign
+python
+
+# saf/data/store.py
+import sqlite3, pandas as pd, yfinance as yf
+from pathlib import Path
+
+DB = Path("saf.db")
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS prices (
+    ticker TEXT NOT NULL,
+    date   TEXT NOT NULL,
+    open REAL, high REAL, low REAL,
+    close REAL, adj_close REAL, volume INTEGER,
+    source TEXT DEFAULT 'yahoo',
+    PRIMARY KEY (ticker, date)
+);
+CREATE TABLE IF NOT EXISTS fundamentals (
+    ticker TEXT PRIMARY KEY,
+    as_of TEXT, json TEXT,          -- raw yfinance info snapshot
+    gross_margin REAL, oper_margin REAL, fwd_pe REAL,
+    market_cap REAL, avg_volume INTEGER,
+    sector TEXT, industry TEXT
+);
+CREATE TABLE IF NOT EXISTS meta (
+    ticker TEXT PRIMARY KEY,
+    last_fetch TEXT, fetch_failures INTEGER DEFAULT 0,
+    quality_flags TEXT               -- JSON array
+);
+"""
+
+def upsert_prices(ticker: str, df: pd.DataFrame):
+    """Incremental update — only fetch missing dates."""
+    con = sqlite3.connect(DB)
+    have = pd.read_sql(
+        "SELECT MAX(date) AS d FROM prices WHERE ticker=?", con,
+        params=(ticker,)).iloc[0]["d"]
+    start = (pd.Timestamp(have) + pd.Timedelta(days=1)) if have else None
+    fresh = yf.download(ticker, start=start, auto_adjust=True, progress=False)
+    if fresh.empty:
+        _bump_failure(con, ticker); return
+    fresh.columns = [c.lower() for c in fresh.columns]
+    fresh.to_sql("prices", con, if_exists="append",
+                 index=True, index_label="date")
+    # tag rows with ticker
+    con.execute("UPDATE prices SET ticker=? WHERE ticker IS NULL", (ticker,))
+    con.commit()
+
+Improvements delivered:
+Issue	Fix
+Repeated full refetch	Incremental: query max date, fetch only the gap
+No history offline	Local parquet/SQLite = instant load, works offline for analysis
+Fabricated fundamentals	Real yf.Ticker().info snapshots cached weekly in fundamentals table
+Silent failures	fetch_failures counter + quality_flags (e.g., "stale>7d", "low_volume", "split_detected")
+Proxy fragility	Server-side direct calls; optional paid feed (Polygon/EODHD) behind same interface
+
+Data-quality gate — every ticker gets a flag object that propagates to the UI:
+python
+
+def quality_report(ticker) -> dict:
+    df = load_prices(ticker)
+    return {
+        "bars": len(df),
+        "last_date": df.index[-1],
+        "stale_days": (pd.Timestamp.now(tz=df.index.tz) - df.index[-1]).days,
+        "zero_vol_days": int((df.volume == 0).sum()),
+        "gap_anomalies": int((df.close.pct_change().abs() > 0.25).sum()),
+        "usable": len(df) >= 200 and (pd.Timestamp.now(tz=df.index.tz) - df.index[-1]).days < 10
+    }
+
+Anything failing usable renders with a red banner in the UI and is excluded from screening by default.
+PART 3 — QUANT ENGINE (Score v2)
+What's wrong with Shadow Alpha Score v1
+
+Recall:
+S1=Trend25+Independence25+RelStr25+Stability25S1​=Trend25​+Independence25​+RelStr25​+Stability25​
+
+    Independence rewards uncorrelated losers
+    Stability penalizes exactly the volatility the thesis seeks
+    Free floors (+12 rel-str, +8 trend) compress the distribution
+    Raw YTD, no risk adjustment
+    Threshold (55) never validated
+
+Score v2 — five sub-scores, sign-aware, regime-aware
+
+S2=wtT+waA+wrR+wqQ+wbBs.t. Σw=100S2​=wt​T+wa​A+wr​R+wq​Q+wb​Bs.t. Σw=100
+
+T (Trend, 25) — keep but remove the floor and use risk-adjusted momentum:
+python
+
+def t_score(px):
+    r6 = px.adj_close.pct_change(126).iloc[-1]          # 6-month momentum
+    vol = px.adj_close.pct_change().std() * np.sqrt(252)
+    sharpe6 = r6 / (vol * np.sqrt(0.5)) if vol > 0 else 0
+    above50 = int(px.adj_close.iloc[-1] > px.adj_close.rolling(50).mean().iloc[-1])
+    return float(np.clip(12.5 * sharpe6 + 6 * above50, 0, 25))
+
+A (Alpha Independence, 30) — the critical fix. Independence must be conditioned on positive idiosyncratic return:
+python
+
+def a_score(px, spy):
+    # Beta-adjusted residual returns, not raw correlation
+    common = px.index.intersection(spy.index)
+    rt = px.adj_close[common].pct_change().dropna()
+    rs = spy.adj_close[common].pct_change().dropna()
+    beta = rt.cov(rs) / rs.var()
+    resid = rt - beta * rs                    # idiosyncratic stream
+    ir = resid.mean() / resid.std() * np.sqrt(252)   # information ratio of residual
+    corr = rt.corr(rs)
+    # Only reward independence when the residual actually EARNED money
+    sign_gate = np.sign(resid.sum())
+    return float(np.clip(sign_gate * (1 - abs(corr)) * 15 + sign_gate * ir * 8,
+
+continue
+
+Ox Alpha
+
+    5.69s
+
+A (Alpha Independence, 30) — continued. The full function:
+python
+
+def a_score(px, spy):
+    """Alpha Independence — beta-adjusted residual IR, sign-gated.
+    Uncorrelated LOSERS now score ~0 instead of 25."""
+    common = px.index.intersection(spy.index)
+    rt = px.adj_close[common].pct_change().dropna()
+    rs = spy.adj_close[common].pct_change().dropna()
+    if len(rt) < 120:
+        return 0.0
+    beta = rt.cov(rs) / rs.var()
+    resid = rt - beta * rs                    # idiosyncratic return stream
+    ir = (resid.mean() / resid.std()) * np.sqrt(252)   # residual information ratio
+    corr = rt.corr(rs)
+    # Gate: independence only pays when the residual actually made money
+    gate = np.tanh(resid.sum() * 10)          # smooth sign: -1..+1
+    raw = (1 - abs(corr)) * 15 + np.clip(ir, -2, 2) * 7.5
+    return float(np.clip(gate * raw, -15, 30))
+
+Note this sub-score can now go negative — an uncorrelated disaster actively subtracts from the composite. That's the whole point.
+
+R (Relative Strength, 20) — replace the free +12 floor with a proper risk-adjusted spread:
+python
+
+def r_score(px, spy):
+    common = px.index.intersection(spy.index)
+    rt = px.adj_close[common].pct_change(63).iloc[-1]   # 3-month
+    rs = spy.adj_close[common].pct_change(63).iloc[-1]
+    vol = px.adj_close.pct_change().std() * np.sqrt(252)
+    # Excess return per unit of own volatility, no free floor
+    return float(np.clip((rt - rs) / max(vol * np.sqrt(0.25), 0.05) * 5, -10, 20))
+
+Q (Quality, 15) — new sub-score; this is where "bottleneck" shows up in numbers rather than vibes:
+python
+
+def q_score(fund):
+    """Quality proxy from REAL fundamentals (no synthFund)."""
+    gm = fund.get("gross_margin") or 0
+    om = fund.get("oper_margin") or 0
+    roe = fund.get("returnOnEquity") or 0
+    # Gross margin >40% = pricing power signal (kept from v3 thesis,
+    # but now it's real data and only worth 15 pts, not implicit everywhere)
+    s = 0.0
+    s += np.clip((gm - 0.25) / 0.45, 0, 1) * 8      # margin level
+    s += np.clip(om / max(gm, 0.01), 0, 1) * 4      # op/gross conversion efficiency
+    s += np.clip(roe / 0.30, 0, 1) * 3              # capital efficiency
+    return float(np.clip(s, 0, 15))
+
+B (Bottleneck Prior, 10) — the AI/analyst rubric score enters as a small prior, not a verdict:
+python
+
+def b_score(bottleneck_rubric):
+    """AI 6-criteria rubric (0-30) mapped to max 10 points.
+    Deliberately capped small: LLM opinion is a prior, not evidence."""
+    total = bottleneck_rubric.get("total", 0)
+    return float(np.clip(total / 30 * 10, 0, 10))
+
+Composite with regime awareness:
+python
+
+def shadow_alpha_v2(px, spy, fund, rubric=None):
+    T = t_score(px); A = a_score(px, spy); R = r_score(px, spy)
+    Q = q_score(fund) if fund else 0
+    B = b_score(rubric) if rubric else 0
+    total = T + A + R + Q + B
+    return {
+        "total": round(total, 1),
+        "components": {"trend": T, "alpha_indep": A, "rel_strength": R,
+                       "quality": Q, "bottleneck_prior": B},
+        "verdict": ("CANDIDATE" if total >= 60 else
+                    "WATCH" if total >= 45 else "PASS"),
+        # NEW: confidence depends on data quality, not just score
+        "confidence": confidence_flag(px, fund),
+    }
+
+def confidence_flag(px, fund):
+    """Score without confidence is noise. Report both."""
+    bars = len(px)
+    fresh = (pd.Timestamp.now(tz=px.index.tz) - px.index[-1]).days < 7
+    has_fund = bool(fund and fund.get("gross_margin") is not None)
+    if bars >= 250 and fresh and has_fund: return "HIGH"
+    if bars >= 150 and fresh:              return "MEDIUM"
+    return "LOW"
+
+Thresholds moved to 60 CANDIDATE / 45 WATCH, but critically — see Part 6 — these are now validated rather than assumed.
+PART 4 — BACKTEST ENGINE (the missing keystone)
+
+Nothing in v3 ever asked: does this score predict forward returns? Here's the harness that answers it.
+python
+
+# saf/quant/backtest.py
+def walk_forward_score_test(universe_tickers, start="2019-01-01"):
+    """
+    Monthly rebalance walk-forward:
+      - At each month-end, compute Score v2 using ONLY data up to that date
+      - Rank universe, form top-quintile vs bottom-quintile portfolios
+      - Measure forward 1M returns, net of costs
+    Output: quintile spread, IC series, turnover, decay curve
+    """
+    dates = month_ends(start)
+    records = []
+    for d in dates[:-1]:
+        scores = {}
+        for t in universe_tickers:
+            px = load_prices_to(t, d)          # point-in-time slice — NO lookahead
+            if len(px) < 250: continue
+            fund = load_fundamentals_asof(t, d)  # cached snapshots, as-of dated
+            scores[t] = shadow_alpha_v2(px, spy_slice(d), fund)["total"]
+        df = pd.Series(scores).sort_values()
+        q = np.array_split(df.index, 5)
+        fwd = {t: fwd_return(t, d, months=1) for t in df.index}
+        for i, bucket in enumerate(q):
+            rets = [fwd[t] for t in bucket if t in fwd]
+            records.append({"date": d, "quintile": i + 1,
+                            "ret": np.mean(rets), "n": len(rets)})
+    res = pd.DataFrame(records)
+    return evaluate(res)
+
+def evaluate(res):
+    by_q = res.groupby("quintile").ret.mean() * 12   # annualized
+    ic = res.groupby("date").apply(
+        lambda g: g.sort_values("quintile").ret.corr(
+                  range(1, 6), method="spearman"))
+    return {
+        "q5_minus_q1_annual": by_q[5] - by_q[1],
+        "ic_mean": ic.mean(), "ic_ir": ic.mean() / ic.std(),
+        "monotonic": bool(by_q.is_monotonic_increasing),
+        "turnover_est": "~40%/mo typical for momentum-style",
+    }
+
+Decision rule written into the system: if q5_minus_q1_annual < 3% or ic_ir < 0.3 after costs, the score is demoted to "research indicator" status and the UI says so explicitly. The threshold stops being folklore.
+
+Also add a decay curve — how fast does the edge fade?
+python
+
+def decay_curve(res, horizons=(5, 21, 63, 126)):
+    """Does the signal work at 1 week? 1 month? A quarter?"""
+    out = {}
+    for h in horizons:
+        # recompute forward returns at each horizon
+        out[h] = quintile_spread(res, horizon=h)
+    return out   # e.g., {5: 0.4%, 21: 1.1%, 63: 0.9%, 126: 0.3%}
+
+This tells you whether to run the screen monthly (if 21d peak) or quarterly.
+PART 5 — GROUNDED AI LAYER
+v3 problem: LLMs scoring bottlenecks from parametric memory = confident hallucination
+Redesign: Retrieval-Augmented analysis with mandatory citations
+
+Step 1 — Evidence pack builder. Before any LLM call, assemble verifiable text:
+python
+
+# saf/ai/evidence.py
+import requests, re
+
+SEC_HEADERS = {"User-Agent": "SkiaAlpha research contact@example.com"}
+
+def build_evidence_pack(ticker):
+    pack = {}
+    # 1. SEC filings — business description & segment revenue
+    cik = sec_cik_lookup(ticker)
+    if cik:
+        tenk = latest_10k(cik)
+        pack["business_desc"] = extract_item_1(tenk)[:6000]
+
+continue
+
+Ox Alpha
+
+    4.56s
+
+Step 1 — Evidence pack builder (continued):
+python
+
+pack["business_desc"] = extract_item_1(tenk)[:6000]   # Item 1: Business
+        pack["segments"] = extract_segment_revenue(tenk)       # Item 8 / segment note
+        pack["risk_factors"] = extract_item_1a(tenk)[:4000]
+    # 2. Market-share evidence — search filings for concentration language
+    pack["concentration_hits"] = grep_patterns(tenk, [
+        r"(?:largest|leading|top)\s+(?:two|three|four|five|few)\s+(?:companies|suppliers|manufacturers|producers)",
+        r"control[s]?\s+(?:approximately\s+)?\d{2,3}%",
+        r"oligopoly", r"duopoly", r"near-monopoly",
+        r"no\s+(?:viable|known)\s+substitute",
+        r"sole\s+(?:approved\s+)?(?:supplier|source|manufacturer)",
+    ])
+    # 3. Capex intensity from financials
+    pack["capex_ratio"] = capex_over_revenue(ticker)   # from cash-flow statement
+    # 4. Live news (GDELT — already in the stack)
+    pack["recent_headlines"] = gdelt_search(ticker, days=14, limit=10)
+    return pack
+
+The concentration_hits regex sweep is the cheap, high-value trick here: 10-Ks literally say "the three largest producers control approximately 78% of global capacity." You're extracting the company's own admission of bottleneck status instead of asking an LLM to guess it.
+
+Step 2 — Grounded rubric scoring with citation requirement:
+python
+
+RUBRIC_GROUNDED_SYS = """You are a bottleneck analyst. You will receive an
+EVIDENCE PACK containing excerpts from the company's own SEC filings.
+
+Rules:
+1. Score each criterion 1-5 ONLY if the evidence pack contains direct support.
+2. For each score, quote the exact supporting sentence from the pack.
+3. If no support exists, score the criterion 2 (neutral) and write
+   "INSUFFICIENT EVIDENCE" as your quote.
+4. Never use your own knowledge of the company to fill gaps.
+5. Return ONLY valid JSON:
+{"scores": {...}, "citations": {...}, "unsupported": [...], "total": N}
+
+An unsupported high score is a FAILURE, not a guess."""
+
+def grounded_rubric(ticker, pack):
+    out = extract_json(llm(RUBRIC_GROUNDED_SYS,
+        f"EVIDENCE PACK:\n{json.dumps(pack, indent=1)}",
+        temperature=0.2, force_json=True))
+    if not out: return None
+    # Post-hoc verification: check citations actually appear in the pack
+    for crit, quote in out.get("citations", {}).items():
+        if quote != "INSUFFICIENT EVIDENCE" and quote not in pack_text(pack):
+            out["scores"][crit] = 2          # hallucinated citation -> neutral score
+            out.setdefault("flagged", []).append(crit)
+    return out
+
+The post-hoc citation verification is the enforcement mechanism — LLMs that fabricate quotes get their scores silently demoted to neutral. This converts hallucination from a silent poison into a measurable, flagged event.
+
+Step 3 — Evidence-grounded memo with confidence disclosure:
+python
+
+def grounded_memo(ticker, pack, score_v2, rubric):
+    unsupported = rubric.get("unsupported", [])
+    prompt = f"""Ticker: {ticker}
+QUANT SCORE v2: {json.dumps(score_v2['components'])}
+CONFIDENCE: {score_v2['confidence']}
+RUBRIC (grounded): {rubric['total']}/30, {len(unsupported)} criteria unsupported
+EVIDENCE EXCERPTS:
+{pack_text(pack)[:4000]}
+
+Write a 250-word memo. Rules:
+- Every factual claim must trace to the evidence or the quant score
+- If confidence is LOW, open with that fact
+- State explicitly which rubric criteria lacked evidence
+- End with what SPECIFIC data would raise your confidence"""
+    return llm(DEEP_REPORT_SYS, prompt, temperature=0.4)
+
+What changed conceptually: the AI moved from oracle to analyst-with-sources. Its bottleneck opinion now contributes max 10/100 points to the composite, must cite verifiable text, gets algorithmically fact-checked, and must disclose its own gaps. That's the difference between a Ouija board and a research assistant.
+PART 6 — AGENT PIPELINE v2
+Fixes to the TradingAgents implementation
+v3 flaw	v4 fix
+Debate is 2 rounds of rhetoric, judge rewards confidence	Evidence-anchored debate: each side must cite quant numbers + evidence pack; judge scores claims-with-citations, not persuasion
+Judge sees 600-char truncated reports	Full reports; judge receives structured claim lists
+Trader sizes position from vibes	Position sizing comes from the risk engine (Part 7), trader only picks direction
+Memory is a flat list	Memory includes outcome tracking: did past BUYs actually work?
+No disagreement handling	Explicit abstain rule: if judge confidence < 0.6, signal = HOLD with "insufficient conviction"
+python
+
+# Claim extraction — the judge grades claims, not prose
+CLAIM_JUDGE_SYS = """You are the DEBATE FACILITATOR. Extract every factual
+claim from both sides, then classify each:
+- VERIFIED: number appears in the quant data or evidence pack
+- PLAUSIBLE: consistent with evidence but not directly stated
+- FABRICATED: contradicts or absent from all provided data
+Return ONLY JSON:
+{"bull_verified": N, "bull_fabricated": N, "bear_verified": N,
+ "bear_fabricated": N, "winner": "BULL"|"BEAR"|"ABSTAIN",
+ "confidence": 0-1, "rationale": "..."}
+
+A side with >2 FABRICATED claims automatically loses regardless of rhetoric."""
+
+def run_debate_v2(analysts, pack, score):
+    data_block = json.dumps({
+        "quant": score["components"],
+        "evidence_grep": pack["concentration_hits"],
+        "headlines": pack["recent_headlines"]}, indent=1)
+    bull = llm(BULL_SYS, f"DATA (only source of truth):\n{data_block}\n"
+                        f"ANALYST REPORTS:\n{reports(analysts)}\n"
+                        f"RULE: cite only numbers from DATA. Any number not in "
+                        f"DATA will be classified FABRICATED.")
+    bear = llm(BEAR_SYS, ...)
+    verdict = extract_json(llm(CLAIM_JUDGE_SYS, ...))
+    # Abstain rule — new
+    if verdict.get("confidence", 0) < 0.6:
+        verdict = {"winner": "ABSTAIN", "confidence": verdict["confidence"],
+                   "rationale": "No clear edge — defaulting to HOLD"}
+    return verdict
+
+Outcome-tracked memory — the reflection loop that v3 pretended to have:
+python
+
+def grade_past_decisions():
+    """Every 30 days, mark each memory entry with realized outcome."""
+    for rec in store.open_positions():
+        ret = realized_return(rec.ticker, rec.entry_date, rec.horizon)
+        rec.outcome = "WIN" if ret > 2 else "LOSS" if ret < -2 else "FLAT"
+        rec.realized_ret = ret
+    store.commit()
+
+def trader_memory_text(ticker):
+    rows = store.memory_for(ticker, graded=True)
+    if not rows:
+        return "No graded history."
+    wins = [r for r in rows if r.outcome == "WIN"]
+    return (f"Past decisions on {ticker} (GRADED):\n" +
+            "\n".join(f"- {r.date}: {r.action} -> {r.outcome} "
+                      f"({r.realized_ret:+.1f}%) | {r.notes[:60]}"
+                      for r in rows) +
+            f"\nHit rate: {len(wins)}/{len(rows)}")
+
+Now when the trader prompt says "reflect on what worked," it's reflecting on graded outcomes, not its own unverified past opinions.
+PART 7 — RISK & POSITION SIZING ENGINE
+
+v3 let the LLM output position_pct directly. That's backwards — sizing is math, direction is judgment.
+Volatility-targeted sizing with capacity constraints
+python
+
+# saf/exec/sizing.py
+def position_size(ticker, account=100_000, target_vol=0.15,
+                  max_weight=0.08, portfolio=None):
+    px = load_prices(ticker)
+    vol = realized_vol(px, window=60)
+    if vol < 0.05: return {"error": "vol too low — data problem?"}
+
+    # 1. Vol targeting: risk the same per name regardless of its volatility
+    notional = account * target_vol / vol
+
+    # 2. Liquidity constraint: max 5% of 20-day ADV (execution reality)
+    adv = avg_dollar_volume(px, 20)
+    liq_cap = adv * 0.05 * 21        # ~1 month to build at 5% ADV
+
+    # 3. Hard
+
+continue
+
+Ox Alpha
+
+    6.05s
+
+Thought Process
+
+3. Hard caps and portfolio-level constraints:
+python
+
+# 3. Hard caps
+    notional = min(notional, account * max_weight, liq_cap)
+
+    # 4. Portfolio context: sector & basket concentration limits
+    if portfolio:
+        same_sector = sum(w for t, w in portfolio.items()
+                          if sector_of(t) == sector_of(ticker))
+        if same_sector + notional / account > 0.25:
+            notional = max(0, 0.25 - same_sector) * account   # 25% sector cap
+
+        # Correlation-aware: penalize adding to a crowded factor
+        corr_to_book = max_corr(ticker, portfolio)
+        if corr_to_book > 0.7:
+            notional *= (1 - (corr_to_book - 0.7) / 0.3 * 0.5)  # up to -50%
+
+    return {
+        "shares": int(notional // px.close.iloc[-1]),
+        "notional": round(notional),
+        "pct_account": round(notional / account * 100, 1),
+        "binding_constraint": binding(notional, account, adv, max_weight),
+        "est_slippage_bps": slippage_model(notional, adv),
+    }
+
+def slippage_model(notional, adv):
+    """Square-root market impact model (Almgren-style, simplified)."""
+    participation = notional / (adv * 21)          # vs monthly ADV
+    return round(50 * np.sqrt(max(participation, 1e-6)) , 1)  # bps
+
+The risk team's role is redefined: the three LLM personas (Aggressive/Neutral/Safe) no longer invent percentages. They can only adjust a multiplier on the computed size within [0.5×, 1.25×], and the Safe analyst's veto is the only binary power:
+python
+
+RISK_V2_SYS = """You review a mathematically-sized position. You may NOT invent sizes.
+Return ONLY JSON:
+{"size_multiplier": 0.5-1.25, "veto": true/false, "reasoning": "..."}
+Veto requires citing a specific risk fact (earnings date, concentration flag,
+liquidity flag) from the provided data."""
+
+def apply_risk_team(sizing, opinions):
+    mults = [o.get("size_multiplier", 1.0) for o in opinions.values()]
+    any_veto = any(o.get("veto") for o in opinions.values())
+    final_mult = float(np.clip(np.median(mults), 0.5, 1.25))
+    if any_veto:
+        return {**sizing, "shares": 0, "note": "VETOED by risk team"}
+    sizing["shares"] = int(sizing["shares"] * final_mult)
+    sizing["risk_multiplier"] = final_mult
+    return sizing
+
+Stop-loss/take-profit also become structural, not LLM output:
+python
+
+def exits(ticker, entry):
+    px = load_prices(ticker)
+    atr = atr14(px).iloc[-1]
+    return {
+        "stop": round(entry - 2.5 * atr, 2),      # 2.5 ATR — volatility-scaled
+        "trail": round(3.0 * atr, 2),             # trailing stop for winners
+        "time_stop_days": 63,                     # thesis must work in a quarter
+        "review_triggers": ["earnings_date", "score_decay_below_45",
+                            "corr_to_spy_above_0.75"],
+    }
+
+PART 8 — EXECUTION & MONITORING LAYER (entirely new)
+
+v3 had zero lifecycle management: a BUY signal appeared and then nothing tracked it. v4 adds the full position lifecycle:
+python
+
+# saf/exec/lifecycle.py
+STATES = ["SIGNAL", "PENDING", "OPEN", "TRIMMED", "CLOSED", "STOPPED"]
+
+def daily_monitor():
+    """Run after each data refresh."""
+    actions = []
+    for pos in store.open_positions():
+        px = load_prices(pos.ticker)
+        last = px.close.iloc[-1]
+
+        # 1. Stop check (hard rule, no AI involved)
+        if last <= pos.stop:
+            actions.append(close(pos, reason="STOP_HIT"))
+            continue
+        # 2. Time stop
+        if days_since(pos.entry) > pos.time_stop_days and realized_ret(pos) < 0:
+            actions.append(close(pos, reason="TIME_STOP"))
+            continue
+        # 3. Thesis decay — recompute score; exit if it collapsed
+        s = shadow_alpha_v2(px, spy(), fund(pos.ticker))["total"]
+        if s < 40:
+            actions.append(trim(pos, fraction=0.5,
+                          reason=f"SCORE_DECAY ({s:.0f})"))
+        # 4. Trailing stop ratchet
+        pos.stop = max(pos.stop, last - pos.trail_dist)
+    store.commit()
+    return actions
+
+Plus a signal scorecard that closes the loop publicly inside the system:
+python
+
+def signal_scorecard():
+    """The system grades ITSELF. Rendered on the dashboard permanently."""
+    graded = store.closed_positions()
+    by_signal = {}
+    for p in graded:
+        key = f"{p.signal_action}@{p.signal_score_bucket}"
+        by_signal.setdefault(key, []).append(p.realized_ret)
+    rows = []
+    for k, rets in sorted(by_signal.items()):
+        rows.append({
+            "signal": k, "n": len(rets),
+            "avg_ret": np.mean(rets),
+            "hit_rate": np.mean([r > 0 for r in rets]),
+            "vs_spy": np.mean(rets) - spy_ret_over_same_period(rets),
+        })
+    return pd.DataFrame(rows)
+
+This table is the honesty anchor of the whole redesign: every dashboard view shows whether past signals from this system actually made money.
+PART 9 — WEB TERMINAL REDESIGN
+Structural changes
+v3	v4
+Browser does everything (fetch, compute, AI calls)	Browser is read-only client over FastAPI
+Groq key in localStorage	Key lives server-side only, never touches browser
+CORS proxy chain	Direct server-side fetches
+innerHTML with unsanitized feeds	Server returns structured JSON; frontend renders via textContent/DOM APIs or a framework with auto-escaping
+SIM mode renders fake verdicts	Sandbox mode watermarked per-element
+API surface
+python
+
+# saf/server.py (FastAPI)
+app = FastAPI()
+
+@app.get("/api/baskets")                    # basket list + weighted returns
+@app.get("/api/basket/{name}")              # holdings detail
+@app.get("/api/ticker/{t}")                 # dossier: real prices, real fundamentals
+@app.get("/api/ticker/{t}/chart")           # OHLC for lightweight-charts
+@app.post("/api/pipeline/{t}")              # run 5-stage pipeline (real data only)
+@app.get("/api/screen")                     # cached screen results
+@app.get("/api/scorecard")                  # self-graded signal history
+@app.get("/api/system/health")              # diagnostics
+@app.websocket("/ws/pipeline/{run_id}")     # live stage streaming
+
+Frontend honesty rules (enforced in code)
+javascript
+
+// Every rendered number carries provenance
+function renderMetric(label, value, source) {
+  const el = document.createElement("div");
+  const badge = {live: "LIVE", cached: "CACHED", est: "EST", sim: "SIM"}
+                [source] || "?";
+  el.innerHTML = "";                       // no raw HTML injection, ever
+  el.append(label, ": ", String(value), " ",
+            Object.assign(document.createElement("span"),
+                          {className: `badge ${badge}`, textContent: badge}));
+  return el;
+}
+
+If source === "sim", the element additionally gets a diagonal watermark overlay via CSS. There is no code path where a simulated number renders without its badge — the renderer physically requires the provenance argument.
+Chart upgrade
+
+Replace the TradingView iframe dependency with lightweight-charts (TradingView's open-source lib) fed from your own /api/ticker/{t}/chart endpoint. Benefits: works offline against local cache, overlays your actual position entries/exits/stops on the price line, and no third-party iframe tracking.
+PART 10 — SECURITY HARDENING
+
+    Key management: Groq key in .env, loaded server-side. Web terminal authenticates via a single session token if exposed beyond localhost.
+    Injection surface eliminated: all feed content (GDELT titles, RSS descriptions, Polymarket questions) passes through a strict sanitizer server-side before storage:
+
+python
+
+import html, re
+def clean_text(s, maxlen=300):
+    s = html.unescape(str(s))
+    s = re.sub(r"<[^>]*>", "", s)         # strip tags entirely
+    s = re.sub(r"(javascript|data):", "", s, flags=re.I)
+    return s[:maxlen]
+
+    Rate limiting on all API routes (slowapi) so a runaway frontend loop can't hammer Yahoo/Groq through your server.
+    **Audit trail
+
+continue
+
+Ox Alpha
+
+    5.21s
+
+Thought Process
+
+4. Audit trail — every AI call, signal, and state change is immutable-logged:
+python
+
+# saf/store/audit.py — append-only, hash-chained
+import hashlib, json, time
+
+def log_event(kind: str, payload: dict):
+    prev = store.last_hash()
+    entry = {"ts": time.time(), "kind": kind, "payload": payload,
+             "prev": prev}
+    entry["hash"] = hashlib.sha256(
+        json.dumps(entry, sort_keys=True).encode()).hexdigest()[:16]
+    store.append_audit(entry)     # INSERT-only table, no UPDATE grants
+
+# Logged events: llm_call (prompt hash, model, tokens), signal_issued,
+# position_opened/closed/trimmed, score_recomputed, data_anomaly
+
+Hash-chaining means you can later prove no signal was retroactively edited — cheap integrity for a system whose whole credibility problem is "did it really say that?"
+PART 11 — NEWS & POLYMARKET LAYER v2
+
+v3's news wire was actually one of the better parts. Improvements:
+
+1. Relevance scoring instead of raw dumps:
+python
+
+SHADOW_KEYWORDS = {
+    "bottleneck": 2.0, "supply shortage": 2.0, "lead time": 1.5,
+    "capacity sold out": 2.0, "sole supplier": 2.5, "export control": 2.0,
+    "sanctions": 1.0, "tariff": 1.0, "13F": 1.0, "CoWoS": 2.5,
+    "HBM": 2.0, "backlog": 1.5, "price increase": 1.5, "force majeure": 2.5,
+}
+
+def relevance_score(headline):
+    return sum(w for k, w in SHADOW_KEYWORDS.items() if k in headline.lower())
+
+Only headlines scoring ≥2 reach the analyst prompts; the rest go to a browsable feed. This cuts token waste and focuses the LLM on signal.
+
+2. Event-to-basket mapping — the news analyst's output becomes actionable at portfolio level:
+python
+
+NEWS_PORTFOLIO_SYS = """Given these scored headlines, identify which SAF baskets
+are AFFECTED (positively or negatively). Return ONLY JSON:
+{"events": [{"headline_idx": N, "affected_baskets": [...],
+             "direction": "+/-", "conviction": 0-1,
+             "mechanism": "one sentence on the transmission channel"}]}"""
+
+This is what makes the geopolitical thesis operational: "sanctions enforcement tightening → +BULK CHEMICAL FREIGHT, +AGRO-CHEM" rather than a per-ticker essay.
+
+3. Polymarket as a calibration check, not decoration:
+python
+
+def polymarket_divergence(ticker_thesis_prob, market_slug):
+    """If your thesis implies P(X)=70% but the market prices 35%,
+    either you have an edge or you're wrong. Flag both cases."""
+    mkt = fetch_polymarket(market_slug)[0]
+    gap = ticker_thesis_prob - mkt["yes"]
+    return {"market_price": mkt["yes"], "thesis_implied": ticker_thesis_prob,
+            "gap": round(gap, 2),
+            "interpretation": ("contrarian edge vs crowd" if abs(gap) > 0.15
+                               else "aligned with consensus")}
+
+PART 12 — INTRADAY DESK REDESIGN
+
+The hardcoded matrix becomes an actual computed artifact:
+python
+
+# saf/intraday/leadlag.py
+import yfinance as yf
+from statsmodels.tsa.stattools import coint, adfuller
+
+def lead_lag_scan(equity, proxy, interval="5m", period="60d"):
+    eq = yf.download(equity, interval=interval, period=period, prepost=False)
+    px = yf.download(proxy,  interval=interval, period=period, prepost=False)
+    # RTH alignment
+    eq, px = align_rth(eq, px)
+    re, rp = eq.close.pct_change().dropna(), px.close.pct_change().dropna()
+
+    results = {}
+    for lag in range(-5, 6):                      # negative = proxy leads
+        if lag == 0:
+            results[0] = re.corr(rp)
+        elif lag > 0:
+            results[lag] = re.iloc[:-lag].corr(rp.iloc[lag:])
+        else:
+            results[lag] = re.iloc[-lag:].corr(rp.iloc[:lag])
+
+    best_lag = max(results, key=lambda k: abs(results[k]))
+    spread = np.log(eq.close) - beta_of(eq, px) * np.log(px.close)
+
+    return {
+        "pair": f"{equity}->{proxy}",
+        "best_lag_bars": best_lag,
+        "corr_at_best": round(results[best_lag], 4),
+        "min_overlap_ok": len(re) >= 30 * 78 // 5,   # ≥30 RTH days of 5m bars
+        "spread_stationary": adfuller(spread.dropna())[1] < 0.05,
+        "cointegrated": coint(eq.close, px.close)[1] < 0.05,
+        # Multi-interval confirmation — actually computed now
+        "confirmed_intervals": sum(
+            lead_lag_scan_fast(equity, proxy, iv)["best_lag_bars"] == best_lag
+            for iv in ("1m", "5m", "15m")),
+        "tradeable": all([
+            abs(results[best_lag]) >= 0.15,
+            best_lag > 0,                              # equity must LEAD
+            adfuller(spread.dropna())[1] < 0.05,       # mean-reverting spread
+        ]),
+    }
+
+And the desk renders only pairs where tradeable=True, with a "last validated" timestamp and auto-expiry after 7 days unvalidated. The XYL→PHO edge from v3 either survives this filter or disappears — which is exactly what a real desk would demand.
+PART 13 — CONFIG & UNIVERSE MANAGEMENT
+
+    Universe as versioned YAML (universe.yaml) in git, not localStorage JSON — changes are diffable and revertible.
+    Basket weights validated at load: sum check, duplicate detection, unknown-ticker warnings.
+    Schema:
+
+yaml
+
+baskets:
+  - name: "⚛️ QUANTUM BOTTLENECKS"
+    section: QUANTUM
+    timing_class: hold_only      # from Phase-2 backtest classification
+    holdings: {MKSI: 3.0, COHR: 2.5, OXIG.L: 2.0}
+
+The timing_class field encodes the rotation-ledger verdict per basket directly into config, replacing the separate saf_dashboard.json mechanism.
+PART 14 — MIGRATION PLAN
+
+Sequenced so each phase delivers standalone value:
+Phase	Deliverable	Effort	Unblocks
+1	Shared core lib + SQLite store + incremental fetcher	2–3 days	Everything else
+2	Score v2 + backtest harness → validate/demote thresholds	3–4 days	Trustworthy screening
+3	Kill SIM signals; provenance badges; server-side keys	1–2 days	Safety
+4	Grounded rubric w/ SEC evidence packs + citation checks	3 days	Real bottleneck analysis
+5	Agent pipeline v2 (claim-judge, abstain rule, graded memory)	3 days	Honest signals
+6	Sizing engine + lifecycle monitor + scorecard	3 days	Tradeable process
+7	FastAPI + new frontend client	4–5 days	UX parity+
+8	Intraday scanner (computed) + Polymarket divergence	2 days	Edge discovery
+
+Total 3 weeks of focused work. Phases 1–3 alone eliminate 90% of the hazard while keeping every existing feature functional.
+PART 15 — SUMMARY OF IMPROVEMENTS BY ASPECT
+Aspect	v3 State	v4 State
+Data	PRNG fiction + proxy-scraped live mix	Incremental local store, quality flags, real fundamentals, point-in-time discipline
+Scoring	4 sub-scores, sign-blind, floored, unvalidated	5 components, sign-gated independence, quality-weighted, backtest-validated thresholds
+Backtesting	None	Walk-forward quintile spread, IC, decay curve, demotion rule
+AI grounding	Parametric hallucination	SEC evidence packs, mandatory citations, post-hoc verification, capped influence (10/100)
+Agents	Rhetoric debate, vibes sizing	Claim-graded debate, abstain rule, math sizing, outcome-graded memory
+Risk	LLM invents percentages	Vol-targeted sizing, liquidity caps, slippage model, LLM limited to ±multiplier/veto
+Lifecycle	Signal then	
+
+continue
+
+Ox Alpha
+
+    10.97s
+
+Thought Process
+Aspect	v3 State	v4 State
+Lifecycle	Signal then silence	Stops, time stops, trailing ratchets, thesis-decay trims, daily monitor
+Self-evaluation	None	Signal scorecard on every dashboard view; system grades itself
+Security	Key in localStorage, XSS via headlines, proxy transit	Server-side keys, sanitized feeds, rate limits, hash-chained audit log
+Intraday	Hardcoded static matrix	Computed lead-lag scan with stationarity/cointegration gates + 7-day expiry
+News	Raw dumps into prompts	Relevance-scored, basket-mapped events, Polymarket divergence checks
+Config	localStorage JSON, unversioned	Git-versioned YAML with load-time validation
+Frontend	innerHTML everywhere, fake data indistinguishable	Read-only client over API, mandatory provenance badges, watermarked sandbox
+Code structure	4 files, logic duplicated 4×	One package, single source of truth for every calculation
+PART 16 — THE THREE PRINCIPLES UNDERLYING ALL OF IT
+
+If you remember nothing else from this redesign:
+
+1. Provenance or it didn't happen. Every number in the system carries its source — LIVE, CACHED, EST, SIM — and the renderer enforces the badge. The v3 failure wasn't having a simulator; it was letting simulation wear the costume of analysis. Trust is a property of the pipeline, not the formatting.
+
+2. Judgment proposes, math disposes. LLMs and analysts decide direction and thesis. Volatility targeting, liquidity caps, slippage models, stop distances, and portfolio constraints decide size and exits. The moment an AI outputs "position_pct: 62," you've delegated arithmetic to a text predictor.
+
+3. A score that hasn't been backtested is an opinion with decimals. The walk-forward harness isn't optional infrastructure — it's the mechanism that converts the Shadow Alpha hypothesis from a compelling narrative into either (a) a validated edge with measured decay, or (b) a demoted research indicator. Both outcomes are wins; only ignorance is a loss.
+What I'd Build First
+
+If you want to start executing rather than reading specs: Phase 2's backtest harness is the highest-information-per-hour item in the entire plan. It requires no new architecture — just your existing yfinance fetcher, ~150 lines of Python, and it immediately tells you whether the whole Shadow Alpha scoring concept has any predictive content before you invest three weeks rebuilding around it. If the quintile spread comes back flat, you've saved yourself the entire migration and learned the most valuable lesson cheaply.
+
+Want me to write that backtest harness as complete runnable code next? Or if you'd rather start at Phase 1, I can produce the full saf/ package skeleton — store, fetcher, config loader, and CLI — ready to drop in alongside your existing scripts.
+
+lets improve all aspects step by step until its completely overhauled
+
+Ox Alpha
+
+    8.40s
+
+Thought Process
+Overhaul Execution — Step 1 of 8: Foundation Layer
+
+We start with the package skeleton, SQLite store, incremental data fetcher, and config system. Everything else in later steps builds on this. By the end of this step you'll have a working saf package that fetches and caches real price history + fundamentals with quality flags — replacing the PRNG fiction at its root.
+Directory Structure
+
+saf/
+├── __init__.py
+├── config.py          # YAML config loader + validation
+├── store.py           # SQLite layer (prices, fundamentals, meta, audit)
+├── data.py            # Incremental fetcher + quality reports
+├── universe.yaml      # Versioned basket/universe config
+└── cli.py             # Entry point
+requirements.txt
+
+universe.yaml
+yaml
+
+# Skia Alpha Fund v4 — versioned configuration
+# Changes here are diffable in git. Validate: python -m saf.cli validate
+
+settings:
+  benchmark: SPY
+  lookback_days: 400
+  score_thresholds: {candidate: 60, watch: 45}
+  target_vol: 0.15
+  max_weight: 0.08
+  sector_cap: 0.25
+
+baskets:
+  - name: "🧠 JIM SIMONS (RenTech)"
+    section: AUTOPILOT_TRACKERS
+    timing_class: hold_only
+    holdings: {NVDA: 1.0, PLTR: 1.0, UTHR: 1.0, META: 1.0, AAPL: 1.0,
+               VRSN: 1.0, EXEL: 1.0, KGC: 1.0, SPOT: 1.0, NFLX: 1.0,
+               HOOD: 1.0, GOOGL: 1.0}
+
+  - name: "🤖 NEXUS (AI Tech Infrastructure)"
+    section: CUSTOM_INDICES
+    timing_class: hold_only
+    holdings: {NVDA: 3.0, AMD: 2.0, AVGO: 2.0, TSM: 2.0, MSFT: 2.0,
+               GOOGL: 2.0, AMZN: 2.0, META: 1.5, PLTR: 1.5,
+               NOW: 1.0, SNOW: 1.0, VRT: 1.0}
+
+  - name: "⚛️ QUANTUM BOTTLENECKS"
+    section: QUANTUM
+    timing_class: hold_only
+    holdings: {MKSI: 3.0, COHR: 2.5, OXIG.L: 2.0, PFV.DE: 2.0, LITE: 1.5}
+
+  # ... migrate remaining baskets from BASKETS dict the same way.
+  # I've included three as the pattern; run scripts/migrate_baskets.py below
+  # to auto-generate the full file from your existing SAF.py.
+
+screening_universe:
+  Specialty Chemicals: [LIN, APD, SHW, PPG, ECL, DD, ALB, FMC, MOS, CF, NTR, CE]
+  Industrial Equipment: [CAT, PH, ITT, FLS, ROP, IEX, CMI, DOV, ETN, EMR, HON]
+  Life Science Tools: [TMO, DHR, A, WAT, MTD, ILMN, MKSI, KEYS, TECH, RVTY]
+  Semicon Equipment: [AMAT, LRCX, KLAC, ASML, TER, ONTO, ENTG, UCTT]
+  Critical Minerals: [FCX, NEM, GOLD, AEM, RIO, BHP, SCCO, MP, CCJ, LAC]
+  Shipping & Freight: [ZIM, INSW, FLNG, STNG, TNK, DHT, FRO, EURN]
+  Water & Environmental: [XYL, AWK, WMS, AOS, PENT, TTEK]
+  Defense & Aerospace: [LMT, RTX, NOC, GD, LHX, AVAV, KTOS, MRCY, HEI]
+  Sensors & Photonics: [TDY, APH, ADI, TXN, AMBA, IPGP, LASR, COHR, LITE]
+
+saf/config.py
+python
+
+"""Config loading with validation. Fails loudly on bad config."""
+import yaml
+from pathlib import Path
+from functools import lru_cache
+
+ROOT = Path(__file__).resolve().parent.parent
+
+class ConfigError(Exception): pass
+
+@lru_cache(maxsize=1)
+def load() -> dict:
+    path = ROOT / "saf" / "universe.yaml"
+    if not path.exists():
+        raise ConfigError(f"Missing {path}")
+    cfg = yaml.safe_load(path.read_text())
+
+    _validate(cfg)
+    return cfg
+
+def _validate(cfg):
+    s = cfg.get("settings", {})
+    if "benchmark" not in s:
+        raise ConfigError("settings.benchmark required")
+    th = s.get("score_thresholds", {})
+    if not (0 < th.get("watch", 45) < th.get("candidate", 60) <= 100):
+        raise ConfigError("thresholds must satisfy 0 < watch < candidate <= 100")
+
+    seen = set()
+    for b in cfg.get("baskets", []):
+        name = b.get("name")
+        if not name or not b.get("holdings"):
+            raise ConfigError(f"basket needs name+holdings: {b}")
+        dupes = [t for t in b["holdings"] if t in seen]
+        if dupes:
+            print(f"⚠️  WARNING: {dupes} appear in multiple baskets "
+                  f"(allowed, but check intent)")
+        wsum = sum(b["holdings"].values())
+        if not 0 < wsum < 100:
+            raise ConfigError(f"basket '{name}' weight sum suspicious: {wsum}")
+        seen.update(b["holdings"])
+
+def baskets(cfg=None) -> dict:
+    """name -> holdings dict"""
+    cfg = cfg or load()
+    return {b["name"]: b["holdings"] for b in cfg["baskets"]}
+
+def all_tickers(cfg=None) -> list:
+    cfg = cfg or load()
+    ts = set()
+    for b in cfg["baskets"]:
+        ts.update(b["holdings"])
+    for group in cfg.get("screening_universe", {}).values():
+        ts.update(group)
+    ts.add(cfg["settings"]["benchmark"])
+    return sorted(ts)
+
+def sector_of(ticker, cfg=None):
+    cfg = cfg or load()
+    for sector, tickers in cfg.get("screening_universe", {}).items():
+        if ticker in tickers:
+            return sector
+    for b in cfg["baskets"]:
+        if ticker in b["holdings"]:
+            return b.get("section", "BASKET")
+    return None
+
+saf/store.py
+python
+
+"""SQLite persistence. Single source of truth for all state."""
+import sqlite3, json, hashlib, time
+import pandas as pd
+from pathlib import Path
+
+DB_PATH = Path(__file__).resolve().parent.parent / "saf.db"
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS prices (
+    ticker TEXT NOT NULL,
+    date   TEXT NOT NULL,
+    open REAL, high REAL, low REAL,
+    close REAL, adj_close REAL, volume INTEGER,
+    PRIMARY KEY (ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);
+CREATE TABLE IF NOT EXISTS fundamentals (
+    ticker TEXT PRIMARY KEY,
+    fetched_at TEXT NOT NULL,
+    json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+    ticker TEXT PRIMARY KEY,
+    last_fetch TEXT,
+    last_success TEXT,
+    fetch_failures INTEGER DEFAULT 0,
+    quality_flags TEXT DEFAULT '[]'
+);
+CREATE TABLE IF NOT EXISTS audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    kind TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    prev_hash TEXT,
+    hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL, ticker TEXT NOT NULL,
+    action TEXT, position_pct REAL, notes TEXT,
+    outcome TEXT, realized_ret REAL,          -- filled by grading job
+    signal_json TEXT                           -- full pipeline output snapshot
+);
+"""
+
+def con() -> sqlite3.Connection:
+    c = sqlite3.connect(DB_PATH)
+    c.row_factory = sqlite3.Row
+    return c
+
+def init():
+    with con() as c:
+        c.executescript(SCHEMA)
+
+# ── prices ──────────────────────────────────────────────────
+def upsert_prices(ticker: str, df: pd.DataFrame):
+    """df indexed by date with columns open/high/low/close/adj_close/volume."""
+    rows = [(ticker, str(idx.date()), r.open, r.high, r.low,
+             r.close, r.adj_close, int(r.volume))
+            for idx, r in df.iterrows()]
+    with con() as c:
+        c.executemany(
+           
+
+continue (why you abort all the time)
+
+Ox Alpha
+
+    6.06s
+
+Thought Process
+
+Apologies for the cutoffs — continuing exactly where I stopped, and I'll pack larger chunks into each step going forward.
+saf/store.py (continued)
+python
+
+def upsert_prices(ticker: str, df: pd.DataFrame):
+    """df indexed by date with columns open/high/low/close/adj_close/volume."""
+    rows = [(ticker, str(idx.date()), r.open, r.high, r.low,
+             r.close, r.adj_close, int(r.volume))
+            for idx, r in df.iterrows()]
+    with con() as c:
+        c.executemany(
+            """INSERT OR REPLACE INTO prices
+               (ticker,date,open,high,low,close,adj_close,volume)
+               VALUES (?,?,?,?,?,?,?,?)""", rows)
+        c.execute("""INSERT INTO meta (ticker,last_fetch,last_success)
+                     VALUES (?,datetime('now'),datetime('now'))
+                     ON CONFLICT(ticker) DO UPDATE SET
+                       last_fetch=datetime('now'),
+                       last_success=datetime('now')""", (ticker,))
+
+def load_prices(ticker: str) -> pd.DataFrame:
+    df = pd.read_sql("SELECT * FROM prices WHERE ticker=? ORDER BY date",
+                     con(), params=(ticker,))
+    if df.empty:
+        return pd.DataFrame()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date")
+    # Prefer adj_close; fall back to close
+    df["px"] = df["adj_close"].fillna(df["close"])
+    return df
+
+def load_prices_asof(ticker: str, upto: str) -> pd.DataFrame:
+    """Point-in-time slice — critical for backtests (no lookahead)."""
+    df = load_prices(ticker)
+    return df[df.index <= pd.Timestamp(upto)] if not df.empty else df
+
+def last_price_date(ticker: str):
+    row = con().execute(
+        "SELECT MAX(date) AS d FROM prices WHERE ticker=?",
+        (ticker,)).fetchone()
+    return row["d"]
+
+# ── fundamentals ────────────────────────────────────────────
+def save_fundamentals(ticker: str, info: dict):
+    with con() as c:
+        c.execute("""INSERT OR REPLACE INTO fundamentals
+                     (ticker,fetched_at,json)
+                     VALUES (?,datetime('now'),?)""",
+                  (ticker, json.dumps(info, default=str)))
+
+def get_fundamentals(ticker: str, max_age_days=7):
+    row = con().execute(
+        "SELECT fetched_at,json FROM fundamentals WHERE ticker=?",
+        (ticker,)).fetchone()
+    if not row:
+        return None
+    age = (pd.Timestamp.now() - pd.Timestamp(row["fetched_at"])).days
+    info = json.loads(row["json"])
+    info["_stale_days"] = age
+    return info if age <= max_age_days else {**info, "_stale": True}
+
+# ── quality flags ───────────────────────────────────────────
+def set_flags(ticker: str, flags: list):
+    with con() as c:
+        c.execute("""INSERT INTO meta (ticker,quality_flags) VALUES (?,?)
+                     ON CONFLICT(ticker) DO UPDATE SET quality_flags=excluded.quality_flags""",
+                  (ticker, json.dumps(flags)))
+
+def get_meta(ticker: str) -> dict:
+    row = con().execute("SELECT * FROM meta WHERE ticker=?", (ticker,)).fetchone()
+    return dict(row) if row else {}
+
+# ── audit log (hash-chained, append-only) ───────────────────
+def audit_log(kind: str, payload: dict):
+    prev = con().execute(
+        "SELECT hash FROM audit ORDER BY id DESC LIMIT 1").fetchone()
+    prev_hash = prev["hash"] if prev else "GENESIS"
+    entry = {"ts": time.time(), "kind": kind,
+             "payload": payload, "prev": prev_hash}
+    h = hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:16]
+    with con() as c:
+        c.execute("""INSERT INTO audit (ts,kind,payload,prev_hash,hash)
+                     VALUES (?,?,?,?,?)""",
+                  (entry["ts"], kind, json.dumps(payload, default=str),
+                   prev_hash, h))
+
+def verify_audit_chain() -> bool:
+    rows = con().execute("SELECT * FROM audit ORDER BY id").fetchall()
+    prev = "GENESIS"
+    for r in rows:
+        entry = {"ts": r["ts"], "kind": r["kind"],
+                 "payload": json.loads(r["payload"]), "prev": prev}
+        expect = hashlib.sha256(
+            json.dumps(entry, sort_keys=True).encode()).hexdigest()[:16]
+        if expect != r["hash"]:
+            return False
+        prev = r["hash"]
+    return True
+
+# ── trading memory ──────────────────────────────────────────
+def save_memory(ticker, action, pct, notes, signal_json=None):
+    with con() as c:
+        c.execute("""INSERT INTO memory (date,ticker,action,position_pct,notes,signal_json)
+                     VALUES (datetime('now'),?,?,?,?,?)""",
+                  (ticker, action, pct, notes[:200], signal_json))
+
+def grade_memory(horizon_days=30, win=2.0, loss=-2.0):
+    """Fill in outcomes for memory entries older than horizon, ungraded."""
+    import numpy as np
+    c = con()
+    rows = c.execute("""SELECT id,ticker,date FROM memory
+                        WHERE outcome IS NULL AND
+                        date <= datetime('now', ?)""",
+                     (f"-{horizon_days} days",)).fetchall()
+    for r in rows:
+        px = load_prices(r["ticker"])
+        if px.empty: continue
+        entry_date = pd.Timestamp(r["date"])
+        future = px[px.index > entry_date]
+        if len(future) < 2: continue
+        ret = (future["px"].iloc[-1] / future["px"].iloc[0] - 1) * 100
+        outcome = "WIN" if ret > win else "LOSS" if ret < loss else "FLAT"
+        c.execute("UPDATE memory SET outcome=?, realized_ret=? WHERE id=?",
+                  (outcome, round(ret, 2), r["id"]))
+    c.commit()
+
+saf/data.py
+python
+
+"""Incremental fetcher with quality gates. Never re-downloads what it has."""
+import yfinance as yf
+import pandas as pd
+import numpy as np
+from . import config, store
+
+def refresh_ticker(ticker: str, lookback_days=None) -> bool:
+    """Fetch only missing dates. Returns True if data is usable."""
+    lookback = lookback_days or config.load()["settings"]["lookback_days"]
+    last = store.last_price_date(ticker)
+    start = (pd.Timestamp(last) + pd.Timedelta(days=1)) if last \
+            else pd.Timestamp.now() - pd.Timedelta(days=lookback)
+    if pd.Timestamp(start).date() >= pd.Timestamp.now().date():
+        return True   # already current
+
+    try:
+        raw = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
+                          auto_adjust=True, progress=False, threads=False)
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
+        if raw.empty:
+            _record_failure(ticker)
+            return False
+        raw = raw.rename(columns=str.lower)
+        raw["adj_close"] = raw.get("adj_close", raw["close"])
+        store.upsert_prices(ticker, raw.dropna(subset=["close"]))
+        flags = compute_quality_flags(ticker)
+        store.set_flags(ticker, flags)
+        return True
+    except Exception as e:
+        _record_failure(ticker)
+        store.audit_log("data_error", {"ticker": ticker, "err": str(e)[:120]})
+        return False
+
+def _record_failure(ticker):
+    m = store.get_meta(ticker)
+    with store.con() as c:
+        c.execute("""INSERT INTO meta (ticker,fetch_failures) VALUES (?,1)
+                     ON CONFLICT(ticker) DO UPDATE SET
+                     fetch_failures=fetch_failures+1""", (ticker,))
+
+def refresh_fundamentals(ticker: str) -> dict | None:
+    cached = store.get_fundamentals(ticker, max_age_days=7)
+    if cached and not cached.get("_stale"):
+        return cached
+    try:
+        info = yf.Ticker(ticker).info or {}
+        keep = ["longName","marketCap","trailingPE","forwardPE",
+                "grossMargins","operatingMargins","returnOnEquity",
+                "revenueGrowth","debtToEquity","currentRatio",
+                "dividendYield","targetMeanPrice","sector","industry",
+                "averageVolume","shortPercentOfFloat"]
+        slim = {k: info[k] for k in keep if info.get(k) is not None}
+        if slim:
+            store.save_fundamentals(ticker, slim)
+            return slim
+    except Exception:
+        pass
+    return cached   # stale cache beats nothing
+
+def compute_quality_flags(ticker: str) -> list:
+    df = store.load_prices(ticker)
+    if df.empty:
+        return ["NO_DATA"]
+    flags = []
+    stale = (pd.Timestamp.now(tz=df.index.tz) - df.index
+

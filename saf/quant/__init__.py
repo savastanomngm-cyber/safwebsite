@@ -1,0 +1,1 @@
+"""Quant engine: Score v2 + walk-forward validation."""

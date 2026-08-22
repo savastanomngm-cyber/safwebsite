@@ -1,0 +1,16 @@
+# Phase 1 core
+yfinance>=0.2.40
+pandas>=2.0
+numpy>=1.26
+rich>=13.0
+PyYAML>=6.0
+
+# Later phases (uncomment as you reach them)
+# openai>=1.30          # Phase 4-5: grounded AI + agents
+# statsmodels>=0.14     # Phase 8: intraday lead-lag scanner
+# fastapi uvicorn slowapi  # Phase 7: web terminal server
+
+# Phase 3: research server
+fastapi>=0.110
+uvicorn[standard]>=0.29
+slowapi>=0.1.9

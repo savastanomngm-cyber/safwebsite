@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Skia Alpha Fund — Terminal</title>
 <link rel="icon" type="image/png" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{--ivory:#f4eee1;--paper:#fbf7ec;--navy:#0d1f33;--navy2:#13293f;--ink:#1a2b40;--gold:#c9a13b;--gold2:#a5762a;--goldL:#e9cf9a;--line:rgba(13,31,51,.14);--pos:#1d7a4f;--neg:#a33535;--hold:#b07d2a}
@@ -78,12 +80,18 @@ pre.memo{white-space:pre-wrap;font:12.5px/1.6 Inter;color:var(--ink)}
 .stepper .v{width:26px;text-align:center;font-weight:700;color:var(--navy)}
 .kv{display:grid;grid-template-columns:170px 1fr;gap:6px 14px;font-size:12.5px}
 .kv b{color:var(--navy)}
+.bar{height:8px;border-radius:5px;background:#e8e2d2;overflow:hidden}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--gold2),var(--goldL))}
 details{margin:6px 0}summary{cursor:pointer;font-weight:600;color:var(--navy)}
 [data-ticker],[data-basket]{cursor:pointer}
 #mbg{display:none;position:fixed;inset:0;background:rgba(13,31,51,.55);backdrop-filter:blur(3px);z-index:100;align-items:flex-start;justify-content:center;padding:4vh 16px;overflow:auto}
 .modal{background:var(--paper);border-radius:16px;border-top:5px solid var(--gold);max-width:900px;width:100%;padding:22px 26px;position:relative;animation:up .25s;box-shadow:0 20px 60px rgba(0,0,0,.4)}
 .modal .x{position:absolute;top:12px;right:12px}
 footer{text-align:center;padding:26px;color:#8a94a2;font-size:11px;letter-spacing:2px}
+/* ═══ ⚡ INTRADAY DESK (patch 4/4 — CSS) ═══ */
+.intraday-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:12px}
+.intraday-card{border-left:4px solid var(--hold);background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.intraday-card.confirmed{border-left:4px solid var(--pos)}
 </style>
 </head>
 <body>
@@ -97,6 +105,7 @@ footer{text-align:center;padding:26px;color:#8a94a2;font-size:11px;letter-spacin
     <button data-tab="news">News</button>
     <button data-tab="screener">Screener</button>
     <button data-tab="agents">TradingAgents</button>
+    <button data-tab="intraday">Intraday</button>
     <button data-tab="memory">Memory</button>
     <button data-tab="diag">Diagnostics</button>
     <button data-tab="settings">Settings</button>
@@ -120,16 +129,20 @@ function mulberry32(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15
 const rngFor=t=>mulberry32(xmur3("SAF:"+t)());
 function extractJSON(text){if(!text)return null;try{return JSON.parse(text);}catch(e){}const m=text.match(/\{[\s\S]*\}/);if(m){try{return JSON.parse(m[0]);}catch(e){}}return null;}
 function emblem(size){return `<img src="logo.png" alt="SAF" style="width:${size}px;height:${size}px;object-fit:cover;border-radius:${Math.round(size/8)}px;filter:drop-shadow(0 3px 6px rgba(13,31,51,.25))" onerror="this.outerHTML='<span style=font-size:${size}px>α</span>'">`;}
-/* ═══ TRADINGVIEW CHARTS (free embed, no API key) ═══ */
+/* ═══ TRADINGVIEW CHARTS (lazy) ═══ */
 function tvSymbol(t){const S={".DE":"XETRA:",".ST":"STO:",".AS":"AMS:",".PA":"EPA:",".L":"LSE:",".OL":"OSE:",".VI":"VIE:",".SW":"SWX:",".T":"TSE:"};
 for(const s in S)if(t.endsWith(s))return S[s]+t.slice(0,-s.length);
 if(["UMICY","SMSMY","YARIY","AMSYF","SDVKY","FLIDY","GLNCY"].includes(t)||/^[A-Z]{4,5}Y$/.test(t))return "OTC:"+t;
 return t;}
-function tvChart(t,h){const sym=tvSymbol(t);return `<iframe title="TradingView ${t}" src="https://s.tradingview.com/widgetembed/?frameElementId=tv_${t.replace(/\W/g,"")}&symbol=${encodeURIComponent(sym)}&interval=D&hidesidetoolbar=0&hidetoptoolbar=0&symboledit=1&style=1&theme=light&locale=en&withdateranges=1&allow_symbol_change=1&save_image=0" style="width:100%;height:${h||420}px;border:none;border-radius:10px;background:#fff"></iframe>`;}
+function tvChart(t,h){const sym=tvSymbol(t);return `<iframe loading="lazy" title="TradingView ${t}" src="https://s.tradingview.com/widgetembed/?frameElementId=tv_${t.replace(/\W/g,"")}&symbol=${encodeURIComponent(sym)}&interval=D&hidesidetoolbar=0&hidetoptoolbar=0&symboledit=1&style=1&theme=light&locale=en&withdateranges=1&allow_symbol_change=1&save_image=0" style="width:100%;height:${h||420}px;border:none;border-radius:10px;background:#fff"></iframe>`;}
 
 /* ═══ CONFIG / PERSISTENCE ═══ */
 const LS={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}};
-const state={tab:"dash",settings:LS.get("saf_settings",{key:"",live:false,deep:"openai/gpt-oss-120b",fast:"openai/gpt-oss-20b",rounds:2}),lastScreen:null};
+
+const _s=LS.get("saf_settings",{key:"",live:false,deep:"llama-3.3-70b-versatile",fast:"llama-3.1-8b-instant",rounds:2});
+if(!_s.deep||_s.deep.indexOf("gpt-oss-120b")!==-1)_s.deep="llama-3.3-70b-versatile";
+if(!_s.fast||_s.fast.indexOf("gpt-oss-20b")!==-1)_s.fast="llama-3.1-8b-instant";
+const state={tab:"dash",settings:_s,lastScreen:null};
 const memory=LS.get("saf_memory",[]);
 const aiLog=LS.get("saf_ai_log",[]);
 
@@ -181,7 +194,7 @@ const BASKETS={
 "📏 SPY (S&P 500)":{SPY:1},"📏 QQQ (Nasdaq 100)":{QQQ:1},"📏 XBI (Biotech ETF)":{XBI:1},"📏 GSG (Commodity ETF)":{GSG:1},"📏 SMH (Chip ETF)":{SMH:1},"📏 GLD (Gold ETF)":{GLD:1}};
 const SECTIONS={"🎮 AUTOPILOT TRACKERS":["🧠 JIM SIMONS (RenTech)","🏛️ PELOSI TRACKER","🐻 BURRY TRACKER","🦉 BUFFETT TRACKER","🦁 ACKMAN TRACKER","🧠 DRUCKENMILLER TRACKER","🏭 CITADEL TRACKER","🎯 INVERSE CRAMER (Bear ETFs)","🤖 AI WORLD WAR III"],
 "📊 CUSTOM INDICES":["🧬 GENOME (Biotech Innovation)","⛏️ TERRA (Global Commodities)","🤖 NEXUS (AI Tech Infrastructure)"],
-"💧 WATER":[" WATER (AI Cooling + Scarcity)","⚙️ FLUID & MEMBRANE BOTTLENECKS"],
+"💧 WATER":["💧 WATER (AI Cooling + Scarcity)","⚙️ FLUID & MEMBRANE BOTTLENECKS"],
 "⚔️ FERTILIZER / WAR SQUEEZE":["⚔️ AGRO-CHEM MONOPOLIES (War Squeeze)","🌾 CROP YIELD SHORTAGE","🚢 BULK CHEMICAL FREIGHT","🕵️ BORDER & AML TECH"],
 "🥇 GOLD & E-WASTE":["🥇 GOLD MINERS (Traditional)","👑 GOLD ROYALTY (Pick & Shovel)","♻️ E-WASTE & URBAN MINING","🏦 GOLD BULLION & ETFs","🔧 MINING CAPEX (Equipment)"],
 "🌿 EU CANNABIS INFRA":["🌿 EU CANNABIS INFRASTRUCTURE"],"🦷 DENTAL DISRUPTION":["🦷 DENTAL DISRUPTION (Watch to Short)"],
@@ -211,43 +224,71 @@ const saveUniverse=()=>LS.set("saf_universe",UNIVERSE);
 const universeTickers=()=>[...new Set(Object.values(UNIVERSE).flat())];
 function sectorOf(t){for(const s in UNIVERSE)if(UNIVERSE[s].includes(t))return s;return null;}
 
-/* ═══ DATA LAYER (self-healing: live → sim fallback) ═══ */
+/* ═══ DATA LAYER — INSTANT SIM + BACKGROUND LIVE UPGRADE ═══ */
 const GRID=(()=>{const d=[];let x=new Date();while(d.length<400){const w=x.getDay();if(w!==0&&w!==6)d.unshift(new Date(x));x.setDate(x.getDate()-1);}return d;})();
 const seriesCache=new Map();
 function simSeries(t){const rnd=rngFor(t);const base=8+Math.pow(rnd(),1.7)*680;let drift=(rnd()-0.38)*0.0016;let vol=0.012+rnd()*0.022;if(t==="SPY"){drift=0.0007;vol=0.010;}let p=base;const out=[];for(let i=0;i<GRID.length;i++){const n=(rnd()+rnd()+rnd()-1.5)/1.5;p*=1+drift+vol*n;out.push({t:GRID[i],p});}return out;}
-async function fetchLive(t){const url="https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(t)+"?range=1y&interval=1d";const px=u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u);try{const r=await fetch(px(url),{signal:timeoutSignal(9000)});if(!r.ok)return null;const d=await r.json();const res=d.chart&&d.chart.result&&d.chart.result[0];if(!res)return null;const ts=res.timestamp||[],cl=((res.indicators||{}).quote||[{}])[0].close||[];const out=[];for(let i=0;i<ts.length;i++)if(cl[i]!=null)out.push({t:new Date(ts[i]*1000),p:cl[i]});return out.length>100?out:null;}catch(e){return null;}}
-async function getSeries(t){if(seriesCache.has(t))return seriesCache.get(t);let s=null;if(state.settings.live)s=await fetchLive(t);if(!s)s=simSeries(t);seriesCache.set(t,s);return s;}
+function getSeriesSync(t){if(seriesCache.has(t))return seriesCache.get(t);const s=simSeries(t);seriesCache.set(t,s);return s;}
+async function fetchLive(t){const url="https://query1.finance.yahoo.com/v8/finance/chart/"+encodeURIComponent(t)+"?range=1y&interval=1d";const px=u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u);try{const r=await fetch(px(url),{signal:timeoutSignal(6000)});if(!r.ok)return null;const d=await r.json();const res=d.chart&&d.chart.result&&d.chart.result[0];if(!res)return null;const ts=res.timestamp||[],cl=((res.indicators||{}).quote||[{}])[0].close||[];const out=[];for(let i=0;i<ts.length;i++)if(cl[i]!=null)out.push({t:new Date(ts[i]*1000),p:cl[i]});return out.length>100?out:null;}catch(e){return null;}}
+async function mapConcurrent(items,fn,limit){limit=limit||8;const out=new Array(items.length);let i=0;const w=[];for(let k=0;k<Math.min(limit,items.length);k++)w.push((async()=>{while(true){const idx=i++;if(idx>=items.length)return;out[idx]=await fn(items[idx]);}})());await Promise.all(w);return out;}
+let liveDashDone=false;
+async function liveRefresh(tickers,done){const fresh=await mapConcurrent(tickers,async t=>[t,await fetchLive(t)],10);let changed=false;for(const[t,s]of fresh)if(s){seriesCache.set(t,s);changed=true;}if(changed&&done)done();}
 
-/* ═══ NEWS WIRE — same source as SAF.py / TradingAgents.py ═══
-   Mirrors yf.Ticker().news (Yahoo Finance) with a self-healing
-   chain: direct → 4 CORS proxies → rss2json last resort.
-   Every headline carries its source link (clickable). */
+/* ═══ NEWS WIRE v3 — CORS-native first, proxies as backup ═══ */
 const newsCache=new Map();
 function timeoutSignal(ms){const c=new AbortController();setTimeout(()=>c.abort(),ms);return c.signal;}
 function dec(s){const t=document.createElement("textarea");t.innerHTML=s;return t.value;}
+function fmtGD(d){try{d=String(d||"");if(d.length<8)return"";return new Date(d.slice(0,4)+"-"+d.slice(4,6)+"-"+d.slice(6,8)).toLocaleDateString();}catch(e){return"";}}
+function dedupe(items){const seen=new Set();return items.filter(h=>{const k=(h.title||"").toLowerCase();if(!k||seen.has(k))return false;seen.add(k);return true;});}
 async function fetchRaw(url){const pxs=[u=>u,
 u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u),
 u=>"https://api.codetabs.com/v1/proxy?quest="+encodeURIComponent(u),
-u=>"https://corsproxy.io/?url="+encodeURIComponent(u),
-u=>"https://api.allorigins.win/get?url="+encodeURIComponent(u)];
-for(const px of pxs){try{const r=await fetch(px(url),{signal:timeoutSignal(7000)});if(!r.ok)continue;let t=await r.text();if(!t||t.length<40)continue;
+u=>"https://corsproxy.io/?url="+encodeURIComponent(u)];
+for(const px of pxs){try{const r=await fetch(px(url),{signal:timeoutSignal(4000)});if(!r.ok)continue;let t=await r.text();if(!t||t.length<40)continue;
 if(t.trim().startsWith('{"contents"')){try{t=JSON.parse(t).contents||"";}catch(e){t="";}}
 if(t&&t.length>40)return t;}catch(e){}}return null;}
-function parseNewsJSON(txt){try{const d=JSON.parse(txt);return(d.news||[]).slice(0,10).map(n=>({title:n.title||"",source:n.publisher||"Yahoo Finance",date:n.providerPublishTime?new Date(n.providerPublishTime*1000).toLocaleDateString():"",link:n.link||""})).filter(h=>h.title);}catch(e){return[];}}
-function parseRSS(xml){try{const doc=new DOMParser().parseFromString(xml,"text/xml");if(doc.querySelector("parsererror"))return[];return[...doc.querySelectorAll("item")].slice(0,10).map(i=>({title:(i.querySelector("title")?.textContent||"").trim(),source:(i.querySelector("source")?.textContent||"").trim(),date:new Date(i.querySelector("pubDate")?.textContent||Date.now()).toLocaleDateString(),link:i.querySelector("link")?.textContent||""})).filter(h=>h.title);}catch(e){return[];}}
-function parseAny(txt){const j=parseNewsJSON(txt);return j.length?j:parseRSS(txt);}
+function parseNewsJSON(txt){try{const d=JSON.parse(txt);return dedupe((d.news||[]).slice(0,10).map(n=>({title:n.title||"",source:n.publisher||"Yahoo Finance",date:n.providerPublishTime?new Date(n.providerPublishTime*1000).toLocaleDateString():"",link:n.link||""})));}catch(e){return[];}}
+function parseRSS(xml){try{const doc=new DOMParser().parseFromString(xml,"text/xml");if(doc.querySelector("parsererror"))return[];return dedupe([...doc.querySelectorAll("item")].slice(0,10).map(i=>({title:(i.querySelector("title")?.textContent||"").trim(),source:(i.querySelector("source")?.textContent||"").trim(),date:new Date(i.querySelector("pubDate")?.textContent||Date.now()).toLocaleDateString(),link:i.querySelector("link")?.textContent||""})));}catch(e){return[];}}
 async function fetchNews(q){q=(q||"").trim();if(!q)return[];const key=q.toUpperCase();const hit=newsCache.get(key);if(hit&&Date.now()-hit.ts<300000)return hit.items;
-const isTicker=/^[A-Z0-9.\-]{1,8}$/.test(q);const urls=[];
-if(isTicker)urls.push("https://feeds.finance.yahoo.com/rss/2.0/headline?s="+encodeURIComponent(q)+"&region=US&lang=en-US");
-urls.push("https://query1.finance.yahoo.com/v1/finance/search?q="+encodeURIComponent(q)+"&newsCount=10&quotesCount=0&enableFuzzyQuery=false");
-urls.push("https://news.google.com/rss/search?q="+encodeURIComponent(q)+"&hl=en-US&gl=US&ceid=US:en");
-urls.push("https://www.bing.com/news/search?q="+encodeURIComponent(q)+"&format=rss");
-for(const u of urls){const txt=await fetchRaw(u);if(txt){const items=parseAny(txt);if(items.length){newsCache.set(key,{ts:Date.now(),items});return items;}}}
-try{const r=await fetch("https://api.rss2json.com/v1/api.json?rss_url="+encodeURIComponent("https://news.google.com/rss/search?q="+encodeURIComponent(q)+"&hl=en-US&gl=US&ceid=US:en"),{signal:timeoutSignal(7000)});
-if(r.ok){const d=await r.json();if(d&&d.status==="ok"&&d.items&&d.items.length){const items=d.items.slice(0,10).map(it=>({title:dec((it.title||"").replace(/<[^>]+>/g,"")),source:it.author||"",date:new Date(it.pubDate).toLocaleDateString(),link:it.link||""})).filter(h=>h.title);if(items.length){newsCache.set(key,{ts:Date.now(),items});return items;}}}}catch(e){}
+const t0=Date.now();const done=items=>{items=dedupe(items).slice(0,10);newsCache.set(key,{ts:Date.now(),items});return items;};
+try{const g=await fetch("https://api.gdeltproject.org/api/v2/doc/doc?query="+encodeURIComponent(q)+"&timespan=7d&mode=ArtList&format=json&maxrecords=10",{signal:timeoutSignal(5000)});
+if(g.ok){const d=await g.json();const arts=(d.articles||[]).map(a=>({title:dec(a.title||""),source:(a.domain||"")+(a.sourcecountry?" · "+a.sourcecountry:""),date:fmtGD(a.seendate),link:a.url||""})).filter(h=>h.title&&h.link);
+if(arts.length)return done(arts);}}catch(e){}
+if(Date.now()-t0<8000){try{const r=await fetch("https://api.rss2json.com/v1/api.json?rss_url="+encodeURIComponent("https://news.google.com/rss/search?q="+encodeURIComponent(q)+"&hl=en-US&gl=US&ceid=US:en"),{signal:timeoutSignal(5000)});
+if(r.ok){const d=await r.json();if(d&&d.status==="ok"&&d.items&&d.items.length){const items=d.items.slice(0,10).map(it=>({title:dec((it.title||"").replace(/<[^>]+>/g,"")),source:it.author||"Google News",date:new Date(it.pubDate).toLocaleDateString(),link:it.link||""}));if(items.length)return done(items);}}}catch(e){}}
+if(Date.now()-t0<10000){const txt=await fetchRaw("https://query1.finance.yahoo.com/v1/finance/search?q="+encodeURIComponent(q)+"&newsCount=10&quotesCount=0&enableFuzzyQuery=false");if(txt){const items=parseNewsJSON(txt);if(items.length)return done(items);}}
+if(Date.now()-t0<10000&&/^[A-Z0-9.\-]{1,8}$/.test(q)){const txt=await fetchRaw("https://feeds.finance.yahoo.com/rss/2.0/headline?s="+encodeURIComponent(q)+"&region=US&lang=en-US");if(txt){const items=parseRSS(txt);if(items.length)return done(items);}}
+if(Date.now()-t0<10000){const txt=await fetchRaw("https://news.google.com/rss/search?q="+encodeURIComponent(q)+"&hl=en-US&gl=US&ceid=US:en");if(txt){const items=parseRSS(txt);if(items.length)return done(items);}}
 return[];}
 
-/* ═══ QUANT MATH (mirrors Python formulas) ═══ */
+/* ═══ POLYMARKET INTEL (public Gamma API — no key) ═══ */
+function pmParse(data){const evs=Array.isArray(data)?data:(data&&data.events)||[];const out=[];
+for(const ev of evs){const ms=ev.markets||[ev];for(const m of ms){try{
+const oc=JSON.parse(m.outcomes||"[]");const pr=JSON.parse(m.outcomePrices||"[]");
+let yes=null;for(let i=0;i<oc.length;i++)if(/yes/i.test(oc[i]))yes=parseFloat(pr[i]);
+if(yes==null&&pr.length)yes=parseFloat(pr[0]);
+const slug=m.slug||ev.slug||"";
+out.push({q:m.question||ev.title||"",yes:yes,vol:parseFloat(m.volume24hr||m.volume||0),end:String(m.endDate||ev.endDate||"").slice(0,10),link:slug?"https://polymarket.com/event/"+slug:""});
+}catch(e){}}}
+return out.sort((a,b)=>b.vol-a.vol);}
+async function fetchPolymarket(q,limit){limit=limit||8;
+const url=q?"https://gamma-api.polymarket.com/public-search?q="+encodeURIComponent(q)+"&limit_per_type="+limit
+:"https://gamma-api.polymarket.com/events?active=true&closed=false&order=volume24hr&ascending=false&limit="+limit;
+const txt=await fetchRaw(url);if(!txt)return[];try{return pmParse(JSON.parse(txt)).slice(0,limit);}catch(e){return[];}}
+function pmQueryFor(sector){const s=(sector||"").toLowerCase();
+if(/defen|aerospace|war/.test(s))return "taiwan conflict";
+if(/energy|oil|gas/.test(s))return "oil prices";
+if(/gold|metal|mining/.test(s))return "recession";
+if(/biotech|pharma|life/.test(s))return "fda";
+if(/semicon|technolog|software|ai/.test(s))return "china chips";
+if(/ship|freight/.test(s))return "trade tariffs";
+if(/bank|financ/.test(s))return "fed rate cut";
+return "fed rate cut";}
+function pmCards(items){return items.length?items.map(m=>`<div class="panel"><div class="row" style="justify-content:space-between;align-items:center"><b>${m.q}</b>${m.link?`<a class="nl" href="${m.link}" target="_blank" rel="noopener">open ↗</a>`:""}</div>
+<div class="bar" style="margin:6px 0"><i style="width:${Math.round((m.yes??0.5)*100)}%"></i></div>
+<div class="sub" style="margin:0">YES ${m.yes!=null?Math.round(m.yes*100)+"%":"—"} · 24h vol $${Math.round(m.vol/1000)}K${m.end?" · ends "+m.end:""}</div></div>`).join(""):`<div class="panel sell">No Polymarket data (offline / API blocked).</div>`;}
+
+/* ═══ QUANT MATH ═══ */
 function periodReturn(s,days){if(!s||s.length<2)return null;let base;if(days==="YTD"){const yr=s[s.length-1].t.getFullYear();const yp=s.filter(q=>q.t.getFullYear()===yr);if(yp.length<2)return null;base=yp[0].p;}else{const cut=new Date(s[s.length-1].t.getTime()-days*864e5);const v=s.filter(q=>q.t>=cut);if(v.length<2)return null;base=v[0].p;}return (s[s.length-1].p-base)/base*100;}
 function maxDrawdown(s){let pk=-1e18,m=0;for(const q of s){if(q.p>pk)pk=q.p;const d=(q.p-pk)/pk;if(d<m)m=d;}return m*100;}
 function pearson(x,y){const n=Math.min(x.length,y.length);if(n<61)return null;const a=x.slice(-n),b=y.slice(-n);const ra=[],rb=[];for(let i=1;i<n;i++){ra.push((a[i].p-a[i-1].p)/a[i-1].p);rb.push((b[i].p-b[i-1].p)/b[i-1].p);}let mx=0,my=0;for(let i=0;i<ra.length;i++){mx+=ra[i];my+=rb[i];}mx/=ra.length;my/=ra.length;let sxy=0,sx=0,sy=0;for(let i=0;i<ra.length;i++){const dx=ra[i]-mx,dy=rb[i]-my;sxy+=dx*dy;sx+=dx*dx;sy+=dy*dy;}return sx&&sy?sxy/Math.sqrt(sx*sy):null;}
@@ -259,13 +300,23 @@ function indicators(s){const c=s.map(q=>q.p);const r=[];for(let i=1;i<c.length;i
 function shadowAlphaScore(s,spy){if(!s||s.length<100)return null;const ytd=periodReturn(s,"YTD")||0,m1=periodReturn(s,30)||0;const above=s.at(-1).p>smaLast(s,50)?1:0;const trend=clamp(0,25,ytd*0.25+m1*0.25+above*8);let corr=pearson(s,spy);if(corr==null)corr=0.5;const indep=clamp(0,25,(1-Math.abs(corr))*30);const spyYtd=periodReturn(spy,"YTD")||0;const rs=clamp(0,25,(ytd-spyYtd)*0.4+12);const mdd=maxDrawdown(s);const c=s.map(q=>q.p);const r=[];for(let i=1;i<c.length;i++)r.push((c[i]-c[i-1])/c[i-1]);const vol=Math.sqrt(r.reduce((a,b)=>a+b*b,0)/r.length)*Math.sqrt(252);const stab=clamp(0,25,25-vol*25-Math.abs(mdd)*0.4);return{price:+c.at(-1).toFixed(2),ytd:+ytd.toFixed(2),correlation:+corr.toFixed(3),max_dd:+mdd.toFixed(2),trend:+trend.toFixed(1),independence:+indep.toFixed(1),rel_strength:+rs.toFixed(1),stability:+stab.toFixed(1),total:+(trend+indep+rs+stab).toFixed(1)};}
 function synthFund(t,s){const rnd=rngFor("FUND:"+t);const price=s.at(-1).p;const gm=0.15+rnd()*0.55;return{name:t+" — "+(sectorOf(t)||"Global Infrastructure")+" Holdings",sector:sectorOf(t)||"Industrials",marketCap:3e8+Math.pow(rnd(),2)*2.7e12,price,avgVolume:Math.round(5e4+rnd()*2e7),grossMargin:gm,operMargin:gm*0.45,forwardPE:8+rnd()*32};}
 
-/* ═══ LLM LAYER (Groq; retry on 429, fallback on 404, JSON guard) ═══ */
-async function llm(system,user,{model,temperature=0.7,json=false}={}){const st=state.settings;if(!st.key)return null;model=model||st.deep;let useJson=json;const BACKUP="qwen/qwen3.6-27b";
-for(let a=1;a<=3;a++){try{const body={model,messages:[{role:"system",content:system},{role:"user",content:user}],temperature,max_tokens:2048};if(useJson)body.response_format={type:"json_object"};
+/* ═══ LLM LAYER — self-healing model chain + auto-detect ═══ */
+const MODEL_FALLBACKS=["llama-3.3-70b-versatile","llama-3.1-8b-instant","meta-llama/llama-4-scout-17b-16e-instruct","qwen/qwen3-32b","openai/gpt-oss-20b","openai/gpt-oss-120b"];
+async function llm(system,user,{model,temperature=0.7,json=false}={}){const st=state.settings;if(!st.key)return null;let useJson=json;
+const chain=[model||st.deep,st.deep,...MODEL_FALLBACKS,st.fast].filter((v,i,a)=>v&&a.indexOf(v)===i);
+for(const m of chain){for(let a=1;a<=2;a++){try{const body={model:m,messages:[{role:"system",content:system},{role:"user",content:user}],temperature,max_tokens:2048};if(useJson)body.response_format={type:"json_object"};
 const r=await fetch("https://api.groq.com/openai/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+st.key},body:JSON.stringify(body)});
-if(r.status===429){await sleep(5000*a);continue;}
-if(!r.ok){const txt=await r.text();if(/response_format|json/i.test(txt)&&useJson){useJson=false;continue;}if(/not_found|decommissioned|404/.test(txt)&&model!==BACKUP){model=BACKUP;continue;}continue;}
-const d=await r.json();return (d.choices?.[0]?.message?.content||"").trim();}catch(e){await sleep(1500);}}return null;}
+if(r.status===429){await sleep(4000*a);continue;}
+if(!r.ok){const txt=await r.text();if(/response_format|json/i.test(txt)&&useJson){useJson=false;continue;}if(/not_found|decommissioned|404|model/i.test(txt))break;continue;}
+const d=await r.json();const c=(d.choices?.[0]?.message?.content||"").trim();if(c)return c;break;}catch(e){await sleep(1200);}}}
+return null;}
+async function listGroqModels(){if(!state.settings.key)return[];try{const r=await fetch("https://api.groq.com/openai/v1/models",{headers:{Authorization:"Bearer "+state.settings.key},signal:timeoutSignal(8000)});if(!r.ok)return[];const d=await r.json();return(d.data||[]).map(m=>m.id);}catch(e){return[];}}
+async function autodetectModels(){const live=await listGroqModels();if(!live.length)return null;
+
+const pick=(pref,rx)=>{if(pref&&pref.indexOf("gpt-oss-120b")===-1&&live.includes(pref))return pref;for(const m of MODEL_FALLBACKS)if(live.includes(m))return m;return live.find(m=>rx&&rx.test(m))||live[0];};
+const deep=pick(state.settings.deep,/70b|versatile|scout/);const fast=pick(state.settings.fast,/8b|instant/);
+if(deep)state.settings.deep=deep;if(fast)state.settings.fast=fast;LS.set("saf_settings",state.settings);return{live,deep,fast};}
+async function groqPing(model){try{const r=await fetch("https://api.groq.com/openai/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+state.settings.key},body:JSON.stringify({model,messages:[{role:"user",content:"Reply with the single word: OK"}],temperature:0,max_tokens:16})});const t=await r.text();if(!r.ok)return "HTTP "+r.status+" "+t.slice(0,70);const d=JSON.parse(t);return(d.choices?.[0]?.message?.content||"").trim()||"empty content";}catch(e){return "error: "+String(e).slice(0,60);}}
 const AI=()=>!!state.settings.key;
 function saveAI(type,data){aiLog.push({type,date:new Date().toISOString(),data});if(aiLog.length>100)aiLog.shift();LS.set("saf_ai_log",aiLog);}
 
@@ -371,7 +422,7 @@ Given a trend or demand signal, you must:
 Return ONLY valid JSON:
 {"trend": "...", "supply_chain": ["layer1", ...], "bottlenecks": [{"name": "...", "why_bottleneck": "...", "tickers": ["T1","T2"], "market_concentration": "high/medium/low", "substitutability": "none/limited/many"}], "top_pick": "TICKER", "thesis_summary": "..."}`};
 
-/* ═══ SIM ENGINE (deterministic fallback) ═══ */
+/* ═══ SIM ENGINE ═══ */
 const HL=["13F filings show mega-cap managers adding to bottleneck suppliers","Congressional trading disclosure flags semiconductor equipment purchases","Sanctions enforcement tightens; freight rates on chemical tankers spike","CoWoS capacity remains sold out through next year","Helium-3 supply tightens as quantum programs scale","CDMO lead times stretch to 18 months on biotech demand","Transformer lead times exceed 100 weeks; grid buildout accelerates","Dark fleet rerouting disrupts refined product flows","Rare-earth export controls discussed; drone-motor makers scramble","Pharma glass capacity booked out; vial ecosystem at full utilization"];
 function simReports(t,ind,fund,score){const rnd=rngFor("RPT:"+t);const pick=[0,1,2].map(()=>Math.floor(rnd()*HL.length));const newsScore=+(rnd()-0.4).toFixed(2);const sentScore=+(rnd()*1.1-0.5).toFixed(2);const geoScore=+(rnd()-0.2).toFixed(2);
 return{technical:`Price $${ind.close.toFixed(2)} | SMA20/50/200 ${ind.sma20?.toFixed(2)}/${ind.sma50?.toFixed(2)}/${ind.sma200?.toFixed(2)}\nRSI14 ${ind.rsi?.toFixed(1)} — ${ind.rsi>70?"overbought":ind.rsi>55?"constructive momentum":ind.rsi>40?"neutral":"oversold"}\nMACD hist ${ind.hist>=0?"+":""}${ind.hist?.toFixed(2)}; ATR ${ind.atr?.toFixed(2)}\nKey Points Summary:\n• ${ind.close>ind.sma50?"Above":"Below"} 50-DMA, ${ind.close>ind.sma200?"above":"below"} 200-DMA\n• 5d ${ind.r5?.toFixed(1)}% / 20d ${ind.r20?.toFixed(1)}%\n• Ann. vol ${(ind.annVol*100).toFixed(0)}%`,
@@ -393,14 +444,17 @@ const riskAdj={adjusted_action:riskScore>=8&&trader.action==="BUY"?"HOLD":trader
 const final={approved:true,final_action:riskAdj.adjusted_action,final_position_pct:riskAdj.adjusted_position_pct,notes:"Approved per 5-stage review. Shadow Alpha thesis "+(buy?"intact":"not confirmed")+"."};
 return{verdict,bull,bear,risk,riskAdj,trader,final};}
 
-/* ═══ 5-STAGE PIPELINE (live Yahoo headlines fed to News + Geopolitical) ═══ */
-async function runPipeline(t,onStage){const s=await getSeries(t);const spy=await getSeries("SPY");const ind=indicators(s);const fund=synthFund(t,s);const score=shadowAlphaScore(s,spy)||{total:0,ytd:0,correlation:0.5,max_dd:0};const rpt=simReports(t,ind,fund,score);
-const liveHL=(await fetchNews(t)).map(h=>"• "+h.title+" ("+h.source+")").join("\n");
-const hlText=liveHL||HL.slice(0,4).map(h=>"• "+h).join("\n");
+/* ═══ 5-STAGE PIPELINE — instant paint + news/Polymarket races ═══ */
+async function runPipeline(t,onStage){const s=getSeriesSync(t);const spy=getSeriesSync("SPY");const ind=indicators(s);const fund=synthFund(t,s);const score=shadowAlphaScore(s,spy)||{total:0,ytd:0,correlation:0.5,max_dd:0};const rpt=simReports(t,ind,fund,score);
+onStage(1,"I. ANALYST TEAM (5 agents)","running");
+const live=(await Promise.race([fetchNews(t),sleep(6000).then(()=>[])]))||[];
+const hlText=live.length?live.map(h=>"• "+h.title+" ("+h.source+")").join("\n"):HL.slice(0,4).map(h=>"• "+h).join("\n");
+const pm=(await Promise.race([fetchPolymarket(pmQueryFor(fund.sector),4),sleep(4000).then(()=>[])]))||[];
+const pmTxt=pm.length?"\nPREDICTION MARKET SIGNALS (Polymarket):\n"+pm.map(m=>"• "+m.q+" → YES "+(m.yes!=null?Math.round(m.yes*100)+"%":"?")+" (24h vol $"+Math.round(m.vol/1000)+"K)").join("\n"):"";
 const mem=memory.filter(m=>m.ticker===t).slice(-5);
 const memTxt=mem.length?mem.map(m=>"- "+m.date+": "+m.action+" @ "+m.position_pct+"% | "+(m.notes||"").slice(0,90)).join("\n"):"No past decisions - first analysis of this ticker.";
-onStage(1,"I. ANALYST TEAM (5 agents)","running");const analysts={};
-for(const[k,sys,data]of[["technical",P.TECH,"Ticker: "+t+"\nTechnical data:\n"+JSON.stringify(ind,null,1)],["news",P.NEWS,"Ticker: "+t+"\nRecent headlines:\n"+hlText],["sentiment",P.SENT,"Ticker: "+t+"\nHeadlines to score:\n"+JSON.stringify(hlText.split("\n").slice(0,4))],["fundamentals",P.FUND,"Ticker: "+t+"\nFundamentals:\n"+JSON.stringify(fund,null,1)],["geopolitical",P.GEOPOL,"Ticker: "+t+"\nSector: "+fund.sector+"\nRecent headlines:\n"+hlText]]){analysts[k]=(AI()?await llm(sys,data):null)||rpt[k];}
+const analysts={};
+for(const[k,sys,data]of[["technical",P.TECH,"Ticker: "+t+"\nTechnical data:\n"+JSON.stringify(ind,null,1)],["news",P.NEWS,"Ticker: "+t+"\nRecent headlines:\n"+hlText],["sentiment",P.SENT,"Ticker: "+t+"\nHeadlines to score:\n"+JSON.stringify(hlText.split("\n").slice(0,4))+pmTxt],["fundamentals",P.FUND,"Ticker: "+t+"\nFundamentals:\n"+JSON.stringify(fund,null,1)],["geopolitical",P.GEOPOL,"Ticker: "+t+"\nSector: "+fund.sector+"\nRecent headlines:\n"+hlText+pmTxt]]){analysts[k]=(AI()?await llm(sys,data):null)||rpt[k];}
 onStage(1,"I. ANALYST TEAM",Object.entries(analysts).map(([k,v])=>"— "+k.toUpperCase()+" —\n"+v).join("\n\n"));
 onStage(2,"II. BULL vs BEAR DEBATE","running");const sp=simPipeline(t,ind,fund,score,rpt);
 const reportsTxt=Object.entries(analysts).map(([k,v])=>"### "+k.toUpperCase()+" ###\n"+String(v).slice(0,600)).join("\n");
@@ -438,24 +492,27 @@ function openBrand(){openModal("🏛️ Skia Alpha Fund — Brand System",`
 <div class="panel"><h3>Design language</h3>Champagne-gold α whose exit stroke <b>becomes the upward arrow</b> — alpha generation on an upward trajectory, one unbroken form. Navy = trust & discretion, gold = performance & prestige, ivory = private-bank paper. Serif typography = old-money lineage.</div>
 <div class="sub">Usage: emblem → favicon/app icon/watermarks · +SAF → dashboard header · full lockup → pitch decks & investor letters.</div>`);}
 async function openBasket(name){const h=BASKETS[name];if(!h)return;openModal("🧺 "+name,`<div class="sub"><span class="loader"></span> opening basket…</div>`);
-const tot=Object.values(h).reduce((a,b)=>a+b,0);const cache={};for(const t in h)cache[t]=await getSeries(t);
+const tot=Object.values(h).reduce((a,b)=>a+b,0);const cache={};for(const t in h)cache[t]=getSeriesSync(t);
 const br=d=>{let wr=0,n=0;for(const t in h){const r=periodReturn(cache[t],d);if(r!=null){wr+=r*(h[t]/tot);n++;}}return n?wr:null;};
 let rows="";for(const t in h){const s=cache[t];rows+=`<tr data-ticker="${t}"><td><b>${t}</b></td><td class="r">${h[t].toFixed(1)} <span class="dim">(${Math.round(h[t]/tot*100)}%)</span></td><td class="r">$${s.at(-1).p.toFixed(2)}</td><td class="r">${fmtPct(periodReturn(s,1))}</td><td class="r">${fmtPct(periodReturn(s,30))}</td><td class="r">${fmtPct(periodReturn(s,"YTD"))}</td></tr>`;}
 $("#mbody").innerHTML=`<div class="row" style="margin-bottom:12px"><span class="chip">1D ${fmtPct(br(1))}</span><span class="chip">1W ${fmtPct(br(7))}</span><span class="chip">1M ${fmtPct(br(30))}</span><span class="chip">YTD ${fmtPct(br("YTD"))}</span><span class="chip">${Object.keys(h).length} holdings</span></div>
 <div class="tbl"><table><tr><th>Ticker (click for dossier)</th><th class="r">Weight</th><th class="r">Price</th><th class="r">1D</th><th class="r">1M</th><th class="r">YTD</th></tr>${rows}</table></div>`;}
 async function openTicker(t){openModal("🔍 "+t+" — Dossier",`<div class="sub"><span class="loader"></span> compiling dossier…</div>`);
-const s=await getSeries(t);const spy=await getSeries("SPY");const ind=indicators(s);const sc=shadowAlphaScore(s,spy);const f=synthFund(t,s);const inB=Object.keys(BASKETS).filter(b=>BASKETS[b][t]!=null);
+const s=getSeriesSync(t);const spy=getSeriesSync("SPY");const ind=indicators(s);const sc=shadowAlphaScore(s,spy);const f=synthFund(t,s);const inB=Object.keys(BASKETS).filter(b=>BASKETS[b][t]!=null);
 $("#mbody").innerHTML=`<div class="row" style="margin-bottom:10px"><span class="chip">$${ind.close.toFixed(2)}</span><span class="chip">YTD ${fmtPct(sc?sc.ytd:null)}</span><span class="chip">SPY corr ${sc?sc.correlation:"—"}</span><span class="chip">MaxDD ${sc?sc.max_dd:"—"}%</span><span class="chip">Shadow Alpha <b>${sc?sc.total:"—"}/100</b></span></div>
-<div class="panel" style="margin:10px 0"><h3>📈 TradingView Chart</h3>${tvChart(t,420)}</div>
+<div class="panel" style="margin:10px 0"><h3>📈 TradingView Chart</h3><div id="tvbox" style="height:420px;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:10px;border:1px solid var(--line)"><span class="loader"></span>&nbsp;chart loading…</div></div>
 <div class="grid2" style="gap:12px">
 <div class="panel"><h3>Technicals</h3><div class="kv"><b>RSI14</b><span>${ind.rsi?.toFixed(1)}</span><b>MACD / signal</b><span>${ind.macd?.toFixed(2)} / ${ind.signal?.toFixed(2)}</span><b>SMA50 / SMA200</b><span>${ind.sma50?.toFixed(1)} / ${ind.sma200?.toFixed(1)}</span><b>Ann. volatility</b><span>${(ind.annVol*100).toFixed(0)}%</span><b>5d / 20d</b><span>${fmtPct(ind.r5)} / ${fmtPct(ind.r20)}</span></div></div>
 <div class="panel"><h3>Fundamentals (est.)</h3><div class="kv"><b>Name</b><span>${f.name}</span><b>Sector</b><span>${f.sector}</span><b>Market cap</b><span>${fmtMC(f.marketCap)}</span><b>Gross margin</b><span>${(f.grossMargin*100).toFixed(1)}%</span><b>Fwd P/E</b><span>${f.forwardPE.toFixed(1)}</span></div></div></div>
 ${sc?`<div class="panel"><h3>Shadow Alpha score breakdown</h3><div class="kv"><b>Trend</b><span>${sc.trend}/25</span><b>Independence</b><span>${sc.independence}/25</span><b>Relative strength</b><span>${sc.rel_strength}/25</span><b>Stability</b><span>${sc.stability}/25</span></div></div>`:""}
 <div class="panel"><h3>SAF cross-reference</h3>${inB.length?inB.map(b=>`<span class="chip" data-basket="${b}">${b} · w${BASKETS[b][t]}</span>`).join(""):"✅ Not yet in SAF — run the pipeline below to add it"}</div>
 <div class="panel"><h3>📰 News Wire (click to open source)</h3><div id="mnews"><span class="loader"></span> fetching…</div></div>
+<div class="panel"><h3>🎲 Prediction Market Context</h3><div id="mpm"><span class="loader"></span> fetching…</div></div>
 <div class="row"><button class="btn gold" id="mrun">▶ Run 5-Stage Pipeline</button><button class="btn" id="mmemo">🤖 Fund Manager Memo</button></div>
 <div id="mpipe"></div><div id="mfin"></div><div id="mmemobox"></div>`;
+setTimeout(()=>{const el=$("#tvbox");if(el)el.outerHTML=tvChart(t,420);},350);
 fetchNews(t).then(hs=>{const el=$("#mnews");if(el)el.innerHTML=hs.length?hs.map(h=>`<div style="margin:5px 0">${h.link?`<a class="nl" href="${h.link}" target="_blank" rel="noopener">${h.title} ↗</a>`:`<b>${h.title}</b>`} <span class="dim">— ${h.source} · ${h.date}</span></div>`).join(""):"<span class='dim'>No live headlines (offline / SIM mode).</span>";});
+fetchPolymarket(pmQueryFor(f.sector),4).then(items=>{const el=$("#mpm");if(el)el.innerHTML=pmCards(items);});
 $("#mrun").onclick=async()=>{$("#mrun").disabled=true;$("#mpipe").innerHTML="";$("#mfin").innerHTML="";
 const res=await runPipeline(t,makeStages("mpipe","M"));
 const a=res.final.final_action;const col=a==="BUY"?"buy":a==="SELL"?"sell":"hold";
@@ -473,38 +530,38 @@ const bk=e.target.closest("[data-basket]");if(bk){openBasket(bk.dataset.basket);
 
 /* ═══ ROUTER ═══ */
 $("#nav").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;state.tab=b.dataset.tab;document.querySelectorAll("#nav button").forEach(x=>x.classList.toggle("on",x===b));render();});
-function render(){({dash:renderDash,news:renderNews,screener:renderScreener,agents:renderAgents,memory:renderMemory,diag:renderDiag,settings:renderSettings})[state.tab]();}
+function render(){({dash:renderDash,news:renderNews,screener:renderScreener,agents:renderAgents,intraday:renderIntraday,memory:renderMemory,diag:renderDiag,settings:renderSettings})[state.tab]();}
 function pills(){$("#pillAI").textContent=AI()?"AI LIVE":"AI OFF";$("#pillAI").className="pill "+(AI()?"ok":"off");$("#pillData").textContent=state.settings.live?"LIVE DATA":"SIM DATA";$("#pillData").className="pill "+(state.settings.live?"ok":"off");}
 
-/* ═══ NEWS TAB (clickable headlines) ═══ */
+/* ═══ NEWS TAB ═══ */
 function renderNews(){$("#main").innerHTML=`<div class="wrap">
-<div class="card"><h1>📰 Shadow Alpha News Wire</h1><div class="sub">Same Yahoo Finance feed as <b>yf.Ticker().news</b> in SAF.py / TradingAgents.py (RSS + rss2json backup) · type any asset or theme · <b>click a headline to open the source article</b></div>
+<div class="card"><h1>📰 Shadow Alpha News Wire</h1><div class="sub">Chain: GDELT → rss2json → Yahoo Finance (<b>yf.Ticker().news</b> feed) → RSS · type any asset or theme · <b>click a headline to open the source article</b></div>
 <div class="row"><input id="nq" value="NVDA" placeholder="Ticker or theme…" style="width:260px"><button class="btn gold" id="ngo">Load News</button></div>
 <div class="row" style="margin-top:8px"><span class="dim" style="font-size:11px">Quick:</span>
 <button class="btn ghost nchip" data-nq="NVDA">NVDA</button><button class="btn ghost nchip" data-nq="MKSI">MKSI</button><button class="btn ghost nchip" data-nq="gold price">GOLD</button><button class="btn ghost nchip" data-nq="ZIM">ZIM</button><button class="btn ghost nchip" data-nq="SHTPY">SHTPY</button><button class="btn ghost nchip" data-nq="semiconductor supply chain">SEMIS</button><button class="btn ghost nchip" data-nq="rare earth exports">RARE EARTH</button></div>
 <div id="nwire" style="margin-top:14px"></div></div></div>`;
 const load=async()=>{const q=$("#nq").value.trim();if(!q)return;$("#nwire").innerHTML='<div class="panel"><span class="loader"></span> fetching headlines…</div>';const hs=await fetchNews(q);
-$("#nwire").innerHTML=hs.length?`<div class="sub">${hs.length} headlines for “${q}” · click to open ↗</div>`+hs.map(h=>`<div class="panel">${h.link?`<a class="nl" href="${h.link}" target="_blank" rel="noopener">${h.title} ↗</a>`:`<b>${h.title}</b>`}<div class="dim">${h.source} · ${h.date}</div></div>`).join(""):`<div class="panel sell">No headlines found — needs an internet connection.</div>`;};
+$("#nwire").innerHTML=hs.length?`<div class="sub">${hs.length} headlines for "${q}" · click to open ↗</div>`+hs.map(h=>`<div class="panel">${h.link?`<a class="nl" href="${h.link}" target="_blank" rel="noopener">${h.title} ↗</a>`:`<b>${h.title}</b>`}<div class="dim">${h.source} · ${h.date}</div></div>`).join(""):`<div class="panel sell">No headlines found — needs an internet connection.</div>`;};
 $("#ngo").onclick=load;
 $("#nq").addEventListener("keydown",e=>{if(e.key==="Enter")load();});
 document.querySelectorAll(".nchip").forEach(b=>b.onclick=()=>{$("#nq").value=b.dataset.nq;load();});
 load();pills();}
 
 /* ═══ DASHBOARD ═══ */
-async function renderDash(){$("#main").innerHTML=`<div class="wrap">
+async function renderDash(skipLive){$("#main").innerHTML=`<div class="wrap">
 <div class="card"><h1>🦅 Skia Alpha Fund — Dashboard</h1><div class="sub" id="dsub">loading…</div>
 <div class="row"><input id="q" placeholder="🔍 Search ticker…" style="width:220px"><button class="btn" id="ref">🔄 Refresh</button><button class="btn gold" id="exp">💾 Export CSV</button><button class="btn ghost" id="all">🏷️ All Tickers</button></div></div>
 <div id="sres"></div>
 <div class="grid2"><div class="card"><h2>📈 All Baskets Performance <span class="dim" style="font:400 11px Inter">(click a basket to open it)</span></h2><div class="tbl" id="dt"></div></div>
 <div class="card"><h2>🏆 YTD Ranking</h2><div class="tbl" id="rt"></div></div></div>
 <div class="card" id="allc" hidden><h2>🏷️ All Tickers</h2><div id="at"></div></div></div>`;
-$("#ref").onclick=()=>{seriesCache.clear();renderDash();};
-$("#exp").onclick=async()=>{const rows=[["Basket","Ticker","Weight","Price","YTD_%"]];for(const b in BASKETS)for(const t in BASKETS[b]){const s=await getSeries(t);rows.push([b,t,BASKETS[b][t],s.at(-1).p.toFixed(2),(periodReturn(s,"YTD")||0).toFixed(2)]);}downloadCSV("skia_alpha_tickers.csv",rows);};
-$("#all").onclick=async()=>{const c=$("#allc");c.hidden=!c.hidden;if(c.hidden)return;let html="";for(const sec in SECTIONS)for(const n of SECTIONS[sec]){if(!BASKETS[n])continue;const h=BASKETS[n];html+=`<h3 style="margin:12px 0 4px" data-basket="${n}">${n} ⤴</h3><table><tr><th>Ticker</th><th class="r">Weight</th><th class="r">Price</th><th class="r">YTD</th></tr>`;for(const t in h){const s=await getSeries(t);html+=`<tr data-ticker="${t}"><td><b>${t}</b></td><td class="r">${h[t].toFixed(1)}</td><td class="r">$${s.at(-1).p.toFixed(2)}</td><td class="r">${fmtPct(periodReturn(s,"YTD"))}</td></tr>`;}html+="</table>";}$("#at").innerHTML=html;};
+$("#ref").onclick=()=>{seriesCache.clear();liveDashDone=false;renderDash();};
+$("#exp").onclick=async()=>{const rows=[["Basket","Ticker","Weight","Price","YTD_%"]];for(const b in BASKETS)for(const t in BASKETS[b]){const s=getSeriesSync(t);rows.push([b,t,BASKETS[b][t],s.at(-1).p.toFixed(2),(periodReturn(s,"YTD")||0).toFixed(2)]);}downloadCSV("skia_alpha_tickers.csv",rows);};
+$("#all").onclick=async()=>{const c=$("#allc");c.hidden=!c.hidden;if(c.hidden)return;let html="";for(const sec in SECTIONS)for(const n of SECTIONS[sec]){if(!BASKETS[n])continue;const h=BASKETS[n];html+=`<h3 style="margin:12px 0 4px" data-basket="${n}">${n} ⤴</h3><table><tr><th>Ticker</th><th class="r">Weight</th><th class="r">Price</th><th class="r">YTD</th></tr>`;for(const t in h){const s=getSeriesSync(t);html+=`<tr data-ticker="${t}"><td><b>${t}</b></td><td class="r">${h[t].toFixed(1)}</td><td class="r">$${s.at(-1).p.toFixed(2)}</td><td class="r">${fmtPct(periodReturn(s,"YTD"))}</td></tr>`;}html+="</table>";}$("#at").innerHTML=html;};
 $("#q").oninput=async e=>{const q=e.target.value.toUpperCase().trim();if(!q){$("#sres").innerHTML="";return;}const found=[];for(const b in BASKETS)if(BASKETS[b][q]!=null)found.push([b,BASKETS[b][q]]);
 $("#sres").innerHTML=found.length?`<div class="card"><h2>✅ '${q}' in ${found.length} basket(s)</h2><table><tr><th>Basket (click to open)</th><th class="r">Weight</th></tr>${found.map(f=>`<tr data-basket="${f[0]}"><td>${f[0]}</td><td class="r">${f[1].toFixed(1)}</td></tr>`).join("")}</table></div>`:`<div class="card">❌ '${q}' not found.</div>`;};
 const tickers=uniqueTickers();if(!tickers.includes("SPY"))tickers.push("SPY");
-const pdf={};for(const t of tickers)pdf[t]=await getSeries(t);
+const pdf={};for(const t of tickers)pdf[t]=getSeriesSync(t);
 $("#dsub").textContent=new Date().toLocaleString()+" · "+Object.keys(BASKETS).length+" baskets · "+tickers.length+" tickers";
 const bRet=(h,d)=>{const tot=Object.values(h).reduce((a,b)=>a+b,0);let wr=0,n=0;for(const t in h){const r=periodReturn(pdf[t],d);if(r!=null){wr+=r*(h[t]/tot);n++;}}return n?wr:null;};
 let html=`<table><tr><th>Basket</th><th class="r">1D</th><th class="r">1W</th><th class="r">1M</th><th class="r">YTD</th></tr>`;
@@ -512,7 +569,9 @@ const listed=new Set();for(const sec in SECTIONS){html+=`<tr class="secrow"><td 
 const custom=Object.keys(BASKETS).filter(b=>!listed.has(b));if(custom.length){html+=`<tr class="secrow"><td colspan="5">──  AI-ADDED BASKETS ──</td></tr>`;for(const n of custom){const h=BASKETS[n];html+=`<tr data-basket="${n}"><td>${n}</td><td class="r">${fmtPct(bRet(h,1))}</td><td class="r">${fmtPct(bRet(h,7))}</td><td class="r">${fmtPct(bRet(h,30))}</td><td class="r">${fmtPct(bRet(h,"YTD"))}</td></tr>`;}}
 $("#dt").innerHTML=html+"</table>";
 const perf=Object.keys(BASKETS).map(n=>[n,bRet(BASKETS[n],"YTD")]).filter(x=>x[1]!=null).sort((a,b)=>b[1]-a[1]);
-$("#rt").innerHTML=`<table><tr><th class="c">#</th><th>Basket</th><th class="r">YTD</th></tr>`+perf.map((p,i)=>`<tr data-basket="${p[0]}"><td class="c" style="color:${i<5?"var(--pos)":i>=perf.length-3?"var(--neg)":"inherit"};font-weight:700">${i+1}</td><td>${p[0]}</td><td class="r">${fmtPct(p[1])}</td></tr>`).join("")+"</table>";pills();}
+$("#rt").innerHTML=`<table><tr><th class="c">#</th><th>Basket</th><th class="r">YTD</th></tr>`+perf.map((p,i)=>`<tr data-basket="${p[0]}"><td class="c" style="color:${i<5?"var(--pos)":i>=perf.length-3?"var(--neg)":"inherit"};font-weight:700">${i+1}</td><td>${p[0]}</td><td class="r">${fmtPct(p[1])}</td></tr>`).join("")+"</table>";
+if(state.settings.live&&!skipLive&&!liveDashDone){liveDashDone=true;$("#dsub").insertAdjacentHTML("beforeend",' · <span class="loader"></span> live update…');liveRefresh(tickers,()=>renderDash(true));}
+pills();}
 
 /* ═══ SCREENER ═══ */
 function renderScreener(){$("#main").innerHTML=`<div class="wrap"><div class="card"><h1>🔍 SAF Screener + AI</h1><div class="sub">Shadow Alpha Asset Discovery · ≥55 candidate · ≥22/30 bottleneck · click any row for the dossier</div></div>
@@ -523,14 +582,15 @@ function renderScreener(){$("#main").innerHTML=`<div class="wrap"><div class="ca
 <button data-t="uni">📋 View / Edit Universe</button>
 <button data-t="cmp">📊 Compare Top Candidates</button>
 <button data-t="sup">🤖 AI Supply Chain Discovery</button>
+<button data-t="pm">🎲 Polymarket Intel</button>
 <button data-t="abot">🤖 AI Bottleneck Analysis</button>
 <button data-t="adeep">🤖 AI Deep Report (Full Memo)</button>
 </div><div class="card" id="out"><div class="dim">Select a tool…</div></div></div></div>`;
 document.querySelectorAll(".tools button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tools button").forEach(x=>x.classList.toggle("on",x===b));SCREENER[b.dataset.t]();});
 SCREENER.screen();}
 const SCREENER={
-async screen(){const out=$("#out");out.innerHTML=`<h2>📡 Full Universe Scan</h2><div class="sub" id="prog">…</div><div id="res"></div>`;const ts=[...new Set([...universeTickers(),"SPY"])];const spy=await getSeries("SPY");const rows=[];
-for(let i=0;i<ts.length;i++){if(ts[i]==="SPY")continue;$("#prog").innerHTML=`<span class="loader"></span> scoring ${i+1}/${ts.length} — ${ts[i]}`;const sc=shadowAlphaScore(await getSeries(ts[i]),spy);if(sc){sc.ticker=ts[i];rows.push(sc);}await sleep(0);}
+async screen(){const out=$("#out");out.innerHTML=`<h2>📡 Full Universe Scan</h2><div class="sub" id="prog">…</div><div id="res"></div>`;const ts=[...new Set([...universeTickers(),"SPY"])];const spy=getSeriesSync("SPY");const rows=[];
+for(let i=0;i<ts.length;i++){if(ts[i]==="SPY")continue;if(i%25===0){$("#prog").innerHTML=`<span class="loader"></span> scoring ${i+1}/${ts.length} — ${ts[i]}`;await sleep(0);}const sc=shadowAlphaScore(getSeriesSync(ts[i]),spy);if(sc){sc.ticker=ts[i];rows.push(sc);}}
 rows.sort((a,b)=>b.total-a.total);state.lastScreen=rows;
 const cand=rows.filter(r=>r.total>=55).length,watch=rows.filter(r=>r.total>=45&&r.total<55).length;
 $("#prog").textContent=`🎯 ${cand} CANDIDATES (≥55) · 👀 ${watch} WATCH (45-54)`;
@@ -538,7 +598,7 @@ $("#res").innerHTML=`<div class="tbl"><table><tr><th>#</th><th>Ticker</th><th cl
 $("#csv").onclick=()=>downloadCSV("saf_screener_results.csv",[["ticker","price","ytd","correlation","max_dd","trend","independence","rel_strength","stability","total"],...rows.map(r=>[r.ticker,r.price,r.ytd,r.correlation,r.max_dd,r.trend,r.independence,r.rel_strength,r.stability,r.total])]);},
 async deep(){const out=$("#out");out.innerHTML=`<h2>🔍 Deep Analysis</h2><div class="row"><input id="tk" placeholder="Ticker" value="MKSI" style="width:110px"><button class="btn" id="go">Run</button></div><div id="dr"></div>`;
 $("#go").onclick=async()=>{const t=$("#tk").value.toUpperCase().trim();$("#dr").innerHTML=`<div class="panel"><span class="loader"></span> deep analysis…</div>`;
-const s=await getSeries(t);const spy=await getSeries("SPY");const ind=indicators(s);const f=synthFund(t,s);const sc=shadowAlphaScore(s,spy);const inB=Object.keys(BASKETS).filter(b=>BASKETS[b][t]!=null);
+const s=getSeriesSync(t);const spy=getSeriesSync("SPY");const ind=indicators(s);const f=synthFund(t,s);const sc=shadowAlphaScore(s,spy);const inB=Object.keys(BASKETS).filter(b=>BASKETS[b][t]!=null);
 $("#dr").innerHTML=`<h3 style="margin-top:14px">STAGE 4 — INVESTABILITY</h3><div class="panel"><div class="kv"><b>Market Cap &gt; $500M</b><span>${fmtMC(f.marketCap)} ${f.marketCap>5e8?"✅":"❌"}</span><b>Price &gt; $5</b><span>$${f.price.toFixed(2)} ${f.price>5?"✅":"❌"}</span><b>Avg Volume &gt; 100K</b><span>${f.avgVolume.toLocaleString()} ${f.avgVolume>1e5?"✅":"❌"}</span></div></div>
 <h3>STAGE 5 — QUANT VALIDATION</h3><div class="panel"><div class="kv"><b>YTD</b><span>${fmtPct(sc.ytd)}</span><b>SPY Correlation</b><span>${sc.correlation} ${sc.correlation<0.5?"✅ low (physical driver)":sc.correlation<0.75?"⚠️ mixed":"❌ beta play"}</span><b>Max Drawdown</b><span>${sc.max_dd}%</span><b>Composite</b><span><b>${sc.total}/100</b> ${sc.total>=55?"🎯":sc.total>=45?"👀":""}</span></div></div>
 <h3>FUNDAMENTALS</h3><div class="panel"><div class="kv"><b>Company</b><span>${f.name}</span><b>Sector</b><span>${f.sector}</span><b>Gross Margin</b><span>${(f.grossMargin*100).toFixed(1)}% ${f.grossMargin>0.4?"✅ pricing power":""}</span><b>Fwd P/E</b><span>${f.forwardPE.toFixed(1)}</span></div></div>
@@ -564,28 +624,42 @@ $("#add").onclick=()=>{const s=$("#sec").value,t=$("#nt").value.toUpperCase().tr
 $("#rem").onclick=()=>{const t=$("#rt2").value.toUpperCase().trim();for(const s in UNIVERSE)UNIVERSE[s]=UNIVERSE[s].filter(x=>x!==t);saveUniverse();SCREENER.uni();};},
 cmp(){const out=$("#out");if(!state.lastScreen){out.innerHTML=`<div class="dim">Run Full Screen first.</div>`;return;}
 out.innerHTML=`<h2>🏆 Top Candidates</h2><table><tr><th>Ticker</th><th class="r">Price</th><th class="r">YTD</th><th class="r">Corr</th><th class="r">Score</th></tr>`+state.lastScreen.slice(0,10).map(r=>{const inS=Object.values(BASKETS).some(h=>h[r.ticker]!=null);return `<tr data-ticker="${r.ticker}"><td><b>${r.ticker}</b>${inS?' <span style="color:var(--gold2)">●</span>':""}</td><td class="r">$${r.price}</td><td class="r">${fmtPct(r.ytd)}</td><td class="r">${r.correlation}</td><td class="r"><b>${r.total}</b></td></tr>`;}).join("")+`</table><div class="sub" style="margin-top:6px">● = already in SAF baskets</div>`;},
-async sup(){const out=$("#out");out.innerHTML=`<h2>🤖 AI Supply Chain Discovery</h2><div class="row"><input id="tr" style="flex:1" value="solid-state batteries for electric vehicles"><button class="btn" id="go">Map</button></div><div id="r"></div>`;
-$("#go").onclick=async()=>{const trend=$("#tr").value;$("#r").innerHTML=`<div class="panel"><span class="loader"></span> mapping…</div>`;
-let res=AI()?extractJSON(await llm(P.SUPPLY,"Map the supply chain for this trend and find the Shadow Alpha bottlenecks:\nTREND: "+trend,{json:true,temperature:0.5})):null;
-if(!res){const rnd=rngFor("SUP:"+trend);const uni=universeTickers();const pick=()=>uni[Math.floor(rnd()*uni.length)];res={trend,supply_chain:["Raw materials","Refining & processing","Critical components","Capital equipment","Logistics","End product"],bottlenecks:[1,2,3].map(i=>({name:"Choke point "+i,why_bottleneck:"Oligopoly, no substitutes, >5y capex barrier",tickers:[pick(),pick()],market_concentration:"high",substitutability:"none"})),top_pick:pick(),thesis_summary:"Own the physical bottleneck, not the end product."};saveAI("supply_chain_discovery",{trend,res});}
-let html=`<h3>SUPPLY CHAIN MAP</h3><div class="panel">`+res.supply_chain.map((l,i)=>`${"&nbsp;&nbsp;".repeat(i)}└─ ${l}<br>`).join("")+`</div><h3>BOTTLENECKS</h3>`;
-res.bottlenecks.forEach((b,i)=>{html+=`<div class="panel"><h3>#${i+1} ${b.name}</h3><div class="kv"><b>Why</b><span>${b.why_bottleneck}</span><b>Tickers</b><span>${(b.tickers||[]).map(t=>`<span class="chip" data-ticker="${t}">${t}</span>`).join("")}</span><b>Concentration</b><span>${b.market_concentration}</span></div></div>`;});
-html+=`<div class="panel buy"><h3>🎯 AI TOP PICK: <span data-ticker="${res.top_pick}" style="text-decoration:underline">${res.top_pick}</span></h3>${res.thesis_summary||""}</div><button class="btn gold" id="addu">Add candidates to universe</button>`;
-$("#r").innerHTML=html;$("#addu").onclick=()=>{const name="AI: "+trend.slice(0,30);if(!UNIVERSE[name])UNIVERSE[name]=[];res.bottlenecks.forEach(b=>(b.tickers||[]).forEach(t=>{if(!UNIVERSE[name].includes(t))UNIVERSE[name].push(t);}));saveUniverse();$("#r").insertAdjacentHTML("beforeend",`<div class="panel buy">✅ Added to '${name}'</div>`);};};},
+async sup(){const out=$("#out");out.innerHTML=`<h2>🤖 AI Supply Chain Discovery</h2><div class="row"><input id="tr" style="flex:1" value="solid-state batteries for electric vehicles"><button class="btn gold" id="go">Map</button></div><div id="r" style="margin-top:10px"></div>`;
+const simSup=trend=>{const rnd=rngFor("SUP:"+trend);const uni=universeTickers();const pick=()=>uni[Math.floor(rnd()*uni.length)];return{supply_chain:["Raw materials","Refining & processing","Critical components","Capital equipment","Logistics","End product"],bottlenecks:[1,2,3].map(i=>({name:"Choke point "+i,why_bottleneck:"Oligopoly, no substitutes, >5y capex barrier",tickers:[pick(),pick()],market_concentration:"high",substitutability:"none"})),top_pick:pick(),thesis_summary:"Own the physical bottleneck, not the end product."};};
+$("#go").onclick=async()=>{const trend=$("#tr").value.trim();if(!trend)return;$("#r").innerHTML='<div class="panel"><span class="loader"></span> mapping supply chain…</div>';
+let res=null,usedAI=false;
+if(AI()){try{res=extractJSON(await llm(P.SUPPLY,"Map the supply chain for this trend and find the Shadow Alpha bottlenecks:\nTREND: "+trend,{temperature:0.5,json:true}));usedAI=!!(res&&res.bottlenecks);}catch(e){res=null;}}
+const s=simSup(trend);res=(res&&typeof res==="object")?res:{};
+if(!(res.bottlenecks||[]).length){res=Object.assign({},s,res);usedAI=false;}
+res.supply_chain=(res.supply_chain||[]).length?res.supply_chain:s.supply_chain;
+res.top_pick=res.top_pick||s.top_pick;res.thesis_summary=res.thesis_summary||s.thesis_summary;
+saveAI("supply_chain_discovery",{trend,ai:usedAI,res});
+try{
+let html=`<div class="sub">${usedAI?"🤖 Groq AI map":"⚙️ SIM fallback (AI unavailable or invalid JSON)"} · trend: "${trend}"</div><h3>SUPPLY CHAIN MAP</h3><div class="panel">`+res.supply_chain.map((l,i)=>`${"&nbsp;&nbsp;".repeat(i)}└─ ${l}<br>`).join("")+`</div><h3>BOTTLENECKS</h3>`;
+res.bottlenecks.forEach((b,i)=>{html+=`<div class="panel"><h3>#${i+1} ${b.name||"Choke point"}</h3><div class="kv"><b>Why</b><span>${b.why_bottleneck||"—"}</span><b>Tickers</b><span>${(b.tickers||[]).map(t=>`<span class="chip" data-ticker="${t}">${t}</span>`).join("")||"—"}</span><b>Concentration</b><span>${b.market_concentration||"—"}</span><b>Substitutability</b><span>${b.substitutability||"—"}</span></div></div>`;});
+html+=`<div class="panel buy"><h3>🎯 TOP PICK: <span data-ticker="${res.top_pick}" style="text-decoration:underline">${res.top_pick}</span></h3>${res.thesis_summary||""}</div><button class="btn gold" id="addu">Add candidates to universe</button>`;
+$("#r").innerHTML=html;
+$("#addu").onclick=()=>{const name="AI: "+trend.slice(0,30);if(!UNIVERSE[name])UNIVERSE[name]=[];res.bottlenecks.forEach(b=>(b.tickers||[]).forEach(t=>{if(t&&!UNIVERSE[name].includes(t))UNIVERSE[name].push(t);}));saveUniverse();$("#r").insertAdjacentHTML("beforeend",`<div class="panel buy">✅ Added to '${name}'</div>`);};
+}catch(e){$("#r").innerHTML=`<div class="panel sell">Render error: ${String(e).slice(0,120)}</div>`;}};},
+async pm(){const out=$("#out");out.innerHTML=`<h2>🎲 Polymarket Intel</h2><div class="sub">Crowd probabilities from prediction markets — cross-check for Shadow Alpha theses · click "open ↗" to view on Polymarket</div>
+<div class="row"><input id="pmq" value="fed rate cut" style="width:220px"><button class="btn" id="pmgo">Search</button><button class="btn gold" id="pmtop">🔥 Top by 24h Volume</button></div><div id="pmr" style="margin-top:10px"></div>`;
+const load=async q=>{$("#pmr").innerHTML='<div class="panel"><span class="loader"></span> querying Polymarket…</div>';$("#pmr").innerHTML=pmCards(await fetchPolymarket(q,10));};
+$("#pmgo").onclick=()=>load($("#pmq").value.trim()||null);
+$("#pmtop").onclick=()=>load(null);load(null);},
 async abot(){const out=$("#out");out.innerHTML=`<h2>🤖 AI Bottleneck Analysis</h2><div class="row"><input id="tk" value="MKSI" style="width:110px"><button class="btn" id="go">Analyze</button></div><div id="r"></div>`;
 $("#go").onclick=async()=>{const t=$("#tk").value.toUpperCase().trim();$("#r").innerHTML=`<div class="panel"><span class="loader"></span></div>`;
 let res=AI()?extractJSON(await llm(P.BOTTLE,"Ticker: "+t+"\nPerform full Shadow Alpha bottleneck analysis.",{json:true,temperature:0.3})):null;
 if(!res){const rnd=rngFor("BOT:"+t);const ks=["market_concentration","substitutability","capital_intensity","regulatory_moat","demand_inelasticity","cross_sector_demand"];const sc=ks.map(k=>[k,1+Math.floor(rnd()*5)]);res={company_name:t,what_they_do:"Choke-point supplier",scores:Object.fromEntries(sc),total:sc.reduce((a,b)=>a+b[1],0),key_risk:"Substitution / demand shift"};saveAI("ai_bottleneck_analysis",{ticker:t,res});}
 $("#r").innerHTML=`<div class="panel"><div class="kv"><b>Company</b><span>${res.company_name}</span><b>Does</b><span>${res.what_they_do}</span></div></div><table><tr><th>Criterion</th><th class="c">Score</th></tr>`+Object.entries(res.scores||{}).map(([k,v])=>`<tr><td>${k.replace(/_/g," ")}</td><td class="c" style="color:${v>=4?"var(--pos)":v>=3?"var(--hold)":"var(--neg)"};font-weight:700">${v}/5</td></tr>`).join("")+`<tr><td><b>TOTAL</b></td><td class="c"><b>${res.total}/30</b></td></tr></table><div class="panel ${res.total>=22?"buy":"sell"}" style="margin-top:8px"><h3>${res.total>=22?"🏆 TRUE BOTTLENECK (≥22)":"❌ BELOW THRESHOLD"}</h3>Key risk: ${res.key_risk||"—"}</div>`;};},
 async adeep(){const out=$("#out");out.innerHTML=`<h2>🤖 AI Deep Report</h2><div class="row"><input id="tk" value="MKSI" style="width:110px"><button class="btn" id="go">Generate</button></div><div id="r"></div>`;
-$("#go").onclick=async()=>{const t=$("#tk").value.toUpperCase().trim();const s=await getSeries(t);const sc=shadowAlphaScore(s,await getSeries("SPY"));const f=synthFund(t,s);$("#r").innerHTML=`<div class="panel"><span class="loader"></span> writing memo…</div>`;
+$("#go").onclick=async()=>{const t=$("#tk").value.toUpperCase().trim();const s=getSeriesSync(t);const sc=shadowAlphaScore(s,getSeriesSync("SPY"));const f=synthFund(t,s);$("#r").innerHTML=`<div class="panel"><span class="loader"></span> writing memo…</div>`;
 let memo=AI()?await llm(P.DEEP,"Ticker: "+t+"\nQUANTITATIVE SHADOW ALPHA SCORE:\n"+JSON.stringify(sc,null,1)+"\nFUNDAMENTALS:\n"+JSON.stringify(f,null,1)+"\nWrite the final Shadow Alpha investment memo. Be decisive.",{temperature:0.4}):null;
 if(!memo){const v=sc.total>=55?"BUY":sc.total>=45?"WATCH":"SKIP";memo=`VERDICT: ${v}\nTHESIS: independence ${sc.independence}/25 & corr ${sc.correlation} → non-consensus driver.\nRISK: MDD ${sc.max_dd}%.\nCATALYST: disruption headline flow.\nSIZING: ${sc.total>=65?"2x":sc.total>=55?"1x":"0.5x"}\nGEOPOLITICAL ANGLE: benefits from supply-chain disruption.`;saveAI("ai_deep_report",{ticker:t,memo});}
 $("#r").innerHTML=`<div class="panel buy"><pre class="memo">${memo}</pre></div>`;};}};
 
 /* ═══ TRADINGAGENTS ═══ */
 function renderAgents(){$("#main").innerHTML=`<div class="wrap">
-<div class="card"><h1>⚛️ TradingAgents — 5-Stage Firm Simulation</h1><div class="sub">Analysts → Bull/Bear → Trader → Risk → Fund Manager · ${AI()?"Groq AI live (news-fed, memory-reflective)":"deterministic SIM engine"}</div>
+<div class="card"><h1>⚛️ TradingAgents — 5-Stage Firm Simulation</h1><div class="sub">Analysts → Bull/Bear → Trader → Risk → Fund Manager · ${AI()?"Groq AI live (news + Polymarket fed, memory-reflective)":"deterministic SIM engine"} · stages paint instantly</div>
 <div class="row"><input id="tk" value="NVDA" style="width:110px"><button class="btn gold" id="go">▶ Run Pipeline</button></div></div>
 <div id="tl"></div>
 <div class="card"><h2>📦 Batch Run by Basket</h2><div class="row"><select id="bk">${Object.keys(BASKETS).map(b=>`<option>${b}</option>`).join("")}<option>ALL</option></select><button class="btn" id="bgo">Run Batch</button></div><div class="sub" id="bprog"></div><div id="bres"></div></div></div>`;
@@ -600,6 +674,82 @@ $("#bprog").textContent=`BUY: ${rows.filter(r=>r.a==="BUY").length} | SELL: ${ro
 $("#bres").innerHTML=`<table><tr><th>#</th><th>Ticker</th><th class="c">Signal</th><th class="r">Size %</th><th class="c">Debate</th></tr>`+rows.map((r,i)=>`<tr data-ticker="${r.t}"><td>${i+1}</td><td><b>${r.t}</b></td><td class="c"><span class="sig ${r.a.toLowerCase()}">${r.a}</span></td><td class="r">${r.p}</td><td class="c">${r.w}</td></tr>`).join("")+`</table><br><button class="btn gold" id="bcsv">💾 Export batch CSV</button>`;
 $("#bcsv").onclick=()=>downloadCSV("tradingagents_batch.csv",[["ticker","action","position_pct","debate"],...rows.map(r=>[r.t,r.a,r.p,r.w])]);};pills();}
 
+/* ═══ ⚡ INTRADAY SHADOW ALPHA DESK (patch 3/4) ═══ */
+const INTRADAY={
+matrix:[
+{basket:"🤖 NEXUS (AI Tech Infrastructure)",equity:"NVDA",proxy:"NQ=F",signal:"NO_CLEAR_LEAD_LAG",lag:0,corr:0.8057,conf:1.0,z:-1.136,stat:false,future:"NQ (Nasdaq-100 E-mini)"},
+{basket:"⛏️ TERRA (Global Commodities)",equity:"XOM",proxy:"CL=F",signal:"NO_CLEAR_LEAD_LAG",lag:0,corr:0.4077,conf:0.815,z:-1.348,stat:true,future:"CL (WTI Crude)"},
+{basket:"🥇 GOLD MINERS (Traditional)",equity:"NEM",proxy:"GC=F",signal:"NO_CLEAR_LEAD_LAG",lag:0,corr:0.8746,conf:1.0,z:0.132,stat:false,future:"GC (Comex Gold)"},
+{basket:"⚔️ AGRO-CHEM MONOPOLIES",equity:"NTR",proxy:"ZC=F",signal:"NO_CLEAR_LEAD_LAG",lag:0,corr:0.5094,conf:1.0,z:0.105,stat:false,future:"ZC (Corn)"},
+{basket:"🛡️ C-UAS & AI SURVEILLANCE",equity:"AXON",proxy:"ES=F",signal:"NO_CLEAR_LEAD_LAG",lag:0,corr:0.4136,conf:0.827,z:1.137,stat:false,future:"ES (S&P E-mini)"},
+{basket:"🤖 AI WORLD WAR III",equity:"LMT",proxy:"ES=F",signal:"NO_CLEAR_LEAD_LAG",lag:0,corr:-0.2119,conf:0.424,z:-0.209,stat:false,future:"ES (S&P E-mini)"},
+{basket:"💧 WATER (AI Cooling + Scarcity)",equity:"XYL",proxy:"PHO",signal:"EQUITY_LEADS_PROXY",lag:1,corr:0.3315,conf:0.663,z:-1.188,stat:false,future:"PHO (Water ETF)"},
+{basket:"🧲 RARE EARTH (Drone Motors)",equity:"MP",proxy:"REMX",signal:"NO_CLEAR_LEAD_LAG",lag:0,corr:0.649,conf:1.0,z:1.073,stat:true,future:"REMX"},
+{basket:"📏 SPY BENCHMARK",equity:"SPY",proxy:"ES=F",signal:"NO_CLEAR_LEAD_LAG",lag:0,corr:0.9971,conf:1.0,z:2.357,stat:false,future:"ES (S&P E-mini)"}
+],
+confirm:[
+{basket:"🤖 NEXUS",pair:"NVDA→NQ=F",leads:0,lagOK:true,conf:false},
+{basket:"⛏️ TERRA",pair:"XOM→CL=F",leads:0,lagOK:true,conf:false},
+{basket:"🥇 GOLD MINERS",pair:"NEM→GC=F",leads:0,lagOK:true,conf:false},
+{basket:"⚔️ AGRO-CHEM",pair:"NTR→ZC=F",leads:0,lagOK:true,conf:false},
+{basket:"🛡️ C-UAS",pair:"AXON→ES=F",leads:0,lagOK:true,conf:false},
+{basket:"🤖 AI WWIII",pair:"LMT→ES=F",leads:0,lagOK:true,conf:false},
+{basket:"💧 WATER",pair:"XYL→PHO",leads:2,lagOK:true,conf:true},
+{basket:"🧲 RARE EARTH",pair:"MP→REMX",leads:0,lagOK:true,conf:false},
+{basket:"📏 SPY",pair:"SPY→ES=F",leads:0,lagOK:true,conf:false}
+]};
+function renderIntraday(){
+const confirmed=INTRADAY.matrix.filter(r=>r.signal.includes("EQUITY_LEADS"));
+const cards=confirmed.length?confirmed.map(r=>{
+const c=INTRADAY.confirm.find(x=>x.pair===r.equity+"→"+r.proxy);
+const ok=c&&c.conf;
+return `<div class="panel intraday-card ${ok?'confirmed':''}">
+<h3 style="font-size:15px;margin-bottom:4px">${r.equity} → ${r.proxy}</h3>
+<div class="sub" style="color:var(--gold2);margin-bottom:10px">${r.signal} → front-run ${r.future}</div>
+<div class="kv">
+<b>Lag</b><span>${r.lag} bar</span><b>Corr</b><span>${r.corr.toFixed(4)}</span>
+<b>Conf</b><span>${r.conf.toFixed(2)}</span><b>Z-Score</b><span>${r.z.toFixed(3)}</span>
+<b>Leads</b><span>${c?c.leads+'/3':'?'}</span><b>Stationary</b><span>${r.stat?'✅':'❌'}</span>
+</div>
+<div style="margin-top:10px"><span class="sig ${ok?'buy':'watch'}">${ok?'✅ CONFIRMED':'⚠️ WATCH'}</span></div>
+</div>`;}).join(""):`<div class="panel"><div class="dim">No confirmed edges. Run SAF_Intraday.py to discover them.</div></div>`;
+const matRows=INTRADAY.matrix.map(r=>{
+const sc=r.signal.includes("EQUITY_LEADS")?"buy":r.signal.includes("PROXY_LEADS")?"sell":"none";
+const sl=r.signal.includes("EQUITY_LEADS")?"▲ EQUITY LEADS":r.signal.includes("PROXY_LEADS")?"▼ PROXY LEADS":"— NO EDGE";
+return `<tr><td>${r.basket}</td><td><b>${r.equity}</b></td><td>${r.proxy}</td>
+<td><span class="sig ${sc}">${sl}</span></td><td class="c">${r.lag}</td>
+<td class="r">${r.corr.toFixed(4)}</td><td class="r">${r.conf.toFixed(2)}</td>
+<td class="r">${r.z.toFixed(3)}</td><td class="c ${r.stat?'pos':'neg'}">${r.stat?'✅':'❌'}</td>
+<td class="dim">${r.future}</td></tr>`;}).join("");
+const confRows=INTRADAY.confirm.map(r=>`<tr><td>${r.basket}</td><td><b>${r.pair}</b></td>
+<td class="c">${r.leads}</td><td class="c">${r.lagOK?'✅':'❌'}</td>
+<td class="c"><span class="sig ${r.conf?'buy':'watch'}">${r.conf?'✅ CONFIRMED':'⚠️ UNCONFIRMED'}</span></td></tr>`).join("");
+$("#main").innerHTML=`<div class="wrap">
+<div class="card"><h1>⚡ Intraday Shadow Alpha Desk</h1>
+<div class="sub">Futures / Indices · RTH-aligned · Confidence-scored · Multi-interval confirmed · Lead-lag microstructure arbitrage</div></div>
+<div class="card"><h2>🎯 Active Confirmed Signals</h2>
+<div class="sub">Physical bottleneck equities that lead paper futures by 1-5 bars. Front-run before retail algos catch up.</div>
+<div class="intraday-grid">${cards}</div></div>
+<div class="card"><h2>📡 Lead-Lag Matrix</h2>
+<div class="sub">RTH-aligned · positive lag = equity leads paper future</div>
+<div class="tbl"><table><tr><th>Basket</th><th>Equity</th><th>Proxy</th><th>Signal</th><th class="c">Lag</th><th class="r">Corr</th><th class="r">Conf</th><th class="r">Z</th><th class="c">Stat?</th><th>Future</th></tr>${matRows}</table></div></div>
+<div class="card"><h2>🔁 Multi-Interval Confirmation</h2>
+<div class="sub">Signal must persist across ≥2 of 1m/5m/15m intervals to be tradeable</div>
+<div class="tbl"><table><tr><th>Basket</th><th>Pair</th><th class="c">Leads (of 3)</th><th class="c">Lag OK</th><th class="c">Verdict</th></tr>${confRows}</table></div></div>
+<div class="card"><h2>📊 Methodology</h2>
+<div class="panel"><h3>Lead-Lag Microstructure</h3>
+<div class="sub">Physical bottleneck equities lead paper futures by 1-5 bars during supply-chain disruptions. Front-run the paper market before retail algos catch up.</div>
+<div class="kv" style="margin-top:8px">
+<b>Corr threshold</b><span>≥ 0.15 at best lag</span>
+<b>Min overlap</b><span>≥ 30 bars</span>
+<b>Confirmation</b><span>≥2 of 1m/5m/15m agree</span>
+<b>Stationarity</b><span>Spread must mean-revert (no futures carry drift)</span>
+</div></div>
+<div class="panel buy"><h3>🎯 Active Edge: XYL → PHO</h3>
+<div class="sub">Xylem (water pump manufacturer) leads the PHO water ETF by 1 bar (corr 0.33). Confirmed 2/3 intervals. Physical water infrastructure demand precedes ETF repricing.</div></div>
+</div>
+</div>`;pills();}
+
 /* ═══ MEMORY / DIAG / SETTINGS ═══ */
 function renderMemory(){$("#main").innerHTML=`<div class="wrap"><div class="card"><h1>🧠 Trading Memory — Decision History</h1><div class="sub">${memory.length} recorded decisions (trading_memory.jsonl equivalent) · click a row for the dossier</div>
 <table><tr><th>#</th><th>Date</th><th>Ticker</th><th class="c">Action</th><th class="r">Size %</th><th>Notes</th></tr>`+memory.slice(-30).map((r,i)=>`<tr data-ticker="${r.ticker}"><td>${i+1}</td><td>${r.date}</td><td><b>${r.ticker}</b></td><td class="c"><span class="sig ${String(r.action).toLowerCase()}">${r.action}</span></td><td class="r">${r.position_pct}</td><td>${(r.notes||"").slice(0,120)}</td></tr>`).join("")+`</table><br><button class="btn ghost" id="clr">🗑️ Clear memory</button></div></div>`;
@@ -607,13 +757,16 @@ $("#clr").onclick=()=>{memory.length=0;LS.set("saf_memory",memory);renderMemory(
 async function renderDiag(){$("#main").innerHTML=`<div class="wrap"><div class="card"><h1>🧪 System Diagnostics</h1><div class="sub" id="dp">running…</div><div id="dt"></div></div></div>`;const R=[];
 R.push(["Browser runtime",true,"JS engine operational"]);
 let net=false;try{await fetch("https://api.groq.com",{mode:"no-cors",signal:timeoutSignal(6000)});net=true;}catch(e){}
-R.push(["Internet connectivity",net,net?"Yahoo/Groq/News reachable":"no connection"]);
-let det="synthetic feed active (SIM)";if(net&&state.settings.live){const l=await fetchLive("SPY");det=l?"SPY live $"+l.at(-1).p.toFixed(2):"live fetch failed — SIM fallback";}
+R.push(["Internet connectivity",net,net?"Yahoo/Groq/News/Polymarket reachable":"no connection"]);
+let det="synthetic feed active (SIM — instant)";if(net&&state.settings.live){const l=await fetchLive("SPY");det=l?"SPY live $"+l.at(-1).p.toFixed(2):"live fetch failed — SIM fallback";}
 R.push(["Market data feed",true,det]);
 let nw=[];if(net)nw=await fetchNews("NVDA");
-R.push(["News wire (Yahoo Finance = yf.Ticker().news)",net&&nw.length>0,nw.length?"Yahoo feed OK · "+nw.length+" headlines · e.g. "+nw[0].title.slice(0,50):"Yahoo + RSS fallbacks + rss2json unreachable via all proxies"]);
+R.push(["News wire (GDELT → rss2json → Yahoo → RSS)",net&&nw.length>0,nw.length?"feed OK · "+nw.length+" headlines · e.g. "+nw[0].title.slice(0,50):"all news sources unreachable"]);
+let pmk=[];if(net)pmk=await fetchPolymarket("fed",3);
+R.push(["Polymarket API (Gamma)",net&&pmk.length>0,pmk.length?"markets OK · e.g. "+pmk[0].q.slice(0,50):"Polymarket unreachable"]);
 R.push(["GROQ_API_KEY present",AI(),AI()?"set":"NOT set — AI uses SIM"]);
-if(AI()){const p=await llm("You are a test. Reply with the single word: OK","ping",{temperature:0});R.push(["DEEP model ("+state.settings.deep+")",!!p,(p||"").slice(0,30)||"empty"]);
+if(AI()){const ad=await autodetectModels();R.push(["Groq model auto-detect",!!ad,ad?("live models: "+ad.live.length+" → deep="+ad.deep+" · fast="+ad.fast):"cannot list models (check key)"]);
+const p=await groqPing(state.settings.deep);R.push(["DEEP model ("+state.settings.deep+")",/^OK$/i.test(p),p.slice(0,60)]);
 const j=extractJSON(await llm('Return ONLY JSON: {"status":"ok"}',"test",{model:state.settings.fast,temperature:0,json:true}));R.push(["LLM JSON mode",!!j,j?"parses":"JSON parse failed"]);}
 else R.push(["AI models",false,"skipped — no key"]);
 let w=true;try{localStorage.setItem("t","1");localStorage.removeItem("t");}catch(e){w=false;}
@@ -627,11 +780,13 @@ function renderSettings(){$("#main").innerHTML=`<div class="wrap"><div class="ca
 <div class="panel"><div class="kv"><b>GROQ API KEY</b><span><input id="k" type="password" placeholder="gsk_…" style="width:320px" value="${state.settings.key||""}"> <button class="btn" id="show">👁</button></span>
 <b>Deep model</b><span><input id="md" value="${state.settings.deep}" style="width:260px"></span>
 <b>Fast model</b><span><input id="mf" value="${state.settings.fast}" style="width:260px"></span>
-<b>Live market data</b><span><input type="checkbox" id="lv" ${state.settings.live?"checked":""}> pull Yahoo Finance prices (CORS proxy)</span></div>
-<br><button class="btn gold" id="sv">💾 Save</button> <span class="dim">Key stored only in this browser.</span></div></div>
+<b>Live market data</b><span><input type="checkbox" id="lv" ${state.settings.live?"checked":""}> pull Yahoo Finance prices in background (10-parallel)</span></div>
+<br><button class="btn gold" id="sv">💾 Save</button> <button class="btn" id="auto">🔎 Auto-detect Groq models</button> <span class="dim" id="autotxt"></span>
+<div class="dim" style="margin-top:6px">Key stored only in this browser. SIM mode is always instant; Live upgrades happen in the background.</div></div></div>
 <div class="card"><h2>AI audit log (saf_ai_reports.json equivalent)</h2><div class="sub">${aiLog.length} entries</div><details><summary>View</summary><pre class="memo">${JSON.stringify(aiLog.slice(-10),null,1)}</pre></details></div></div>`;
 $("#show").onclick=()=>{const e=$("#k");e.type=e.type==="password"?"text":"password";};
-$("#sv").onclick=()=>{state.settings={key:$("#k").value.trim(),live:$("#lv").checked,deep:$("#md").value.trim()||"openai/gpt-oss-120b",fast:$("#mf").value.trim()||"openai/gpt-oss-20b",rounds:2};LS.set("saf_settings",state.settings);pills();renderSettings();};pills();}
+$("#auto").onclick=async()=>{$("#autotxt").innerHTML='<span class="loader"></span> querying Groq…';const r=await autodetectModels();$("#autotxt").textContent=r?("✅ "+r.live.length+" live models → deep="+r.deep+" · fast="+r.fast):"❌ no key / Groq unreachable";if(r){$("#md").value=state.settings.deep;$("#mf").value=state.settings.fast;pills();}};
+$("#sv").onclick=()=>{state.settings={key:$("#k").value.trim(),live:$("#lv").checked,deep:$("#md").value.trim()||"openai/gpt-oss-120b",fast:$("#mf").value.trim()||"openai/gpt-oss-20b",rounds:2};liveDashDone=false;LS.set("saf_settings",state.settings);pills();renderSettings();};pills();}
 
 pills();render();
 </script>
